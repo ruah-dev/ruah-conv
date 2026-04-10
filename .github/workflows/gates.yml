@@ -1,0 +1,26 @@
+# Governance gates — run on push and PR to main
+name: Governance Gates
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  gates:
+    name: Governance Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: "typecheck"
+        run: npx tsc --noEmit
+      - name: "lint & format"
+        run: npx biome check .
+      - name: "test"
+        run: npm test
