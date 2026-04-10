@@ -1,6 +1,6 @@
 {
 	"name": "@ruah-dev/conv",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Convert API specs (OpenAPI) into agent-ready tool surfaces — MCP servers, function-calling schemas.",
 	"type": "module",
 	"bin": {
