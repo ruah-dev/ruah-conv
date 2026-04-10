@@ -23,6 +23,10 @@ Feed it an OpenAPI spec, get MCP tool definitions, function-calling schemas, or 
 
 ## See It
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ruah-dev/ruah-conv/main/.github/demo.gif" alt="ruah conv demo" width="100%" />
+</p>
+
 ```bash
 # Parse a spec and see what's inside
 npx @ruah-dev/conv inspect petstore.yaml
