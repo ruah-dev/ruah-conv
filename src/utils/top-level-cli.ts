@@ -1,0 +1,54 @@
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+
+interface PackageJson {
+	version?: string;
+}
+
+export interface TopLevelCliDetection {
+	installed: boolean;
+	version: string | null;
+}
+
+let cachedDetection: TopLevelCliDetection | null = null;
+
+export function detectTopLevelCli(): TopLevelCliDetection {
+	if (cachedDetection) {
+		return cachedDetection;
+	}
+
+	try {
+		const packageJsonPath = require.resolve("@ruah-dev/cli/package.json");
+		const packageJson = JSON.parse(
+			readFileSync(packageJsonPath, "utf8"),
+		) as PackageJson;
+		cachedDetection = {
+			installed: true,
+			version: packageJson.version ?? null,
+		};
+		return cachedDetection;
+	} catch {
+		cachedDetection = {
+			installed: false,
+			version: null,
+		};
+		return cachedDetection;
+	}
+}
+
+export function getPreferredConvCommand(): string {
+	return detectTopLevelCli().installed ? "ruah conv" : "ruah-conv";
+}
+
+export function formatTopLevelCliNotice(): string {
+	const detection = detectTopLevelCli();
+
+	if (detection.installed) {
+		const versionSuffix = detection.version ? ` v${detection.version}` : "";
+		return `Top-level CLI detected${versionSuffix}. Preferred command: ruah conv`;
+	}
+
+	return "Top-level CLI not detected. Install @ruah-dev/cli for the `ruah conv` command: npm install -g @ruah-dev/cli";
+}

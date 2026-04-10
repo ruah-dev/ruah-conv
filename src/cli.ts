@@ -5,6 +5,10 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+	formatTopLevelCliNotice,
+	getPreferredConvCommand,
+} from "./utils/top-level-cli.js";
 import { label, logError } from "./utils/format.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -60,14 +64,17 @@ function getVersion(): string {
 
 // ── Help ─────────────────────────────────────────────────────────────
 
-const HELP = `
+function buildHelp(): string {
+	const command = getPreferredConvCommand();
+
+	return `
 ${label()} — convert API specs to agent-ready tool surfaces
 
 Usage:
-  ruah conv generate <spec-file> [--target mcp-tool-defs] [--output <dir>] [--json]
-  ruah conv inspect <spec-file> [--json]
-  ruah conv validate <spec-file> [--json]
-  ruah conv targets [--json]
+  ${command} generate <spec-file> [--target mcp-tool-defs] [--output <dir>] [--json]
+  ${command} inspect <spec-file> [--json]
+  ${command} validate <spec-file> [--json]
+  ${command} targets [--json]
 
 Commands:
   generate    Parse spec and produce output for the given target
@@ -83,11 +90,16 @@ Options:
   --version, -v   Show version
 
 Examples:
-  ruah conv generate petstore.yaml --json
-  ruah conv inspect petstore.yaml
-  ruah conv validate petstore.yaml --json
-  ruah conv generate petstore.yaml --target mcp-tool-defs --output ./generated/
+  ${command} generate petstore.yaml --json
+  ${command} inspect petstore.yaml
+  ${command} validate petstore.yaml --json
+  ${command} generate petstore.yaml --target mcp-tool-defs --output ./generated/
+
+CLI:
+  ${formatTopLevelCliNotice()}
+  Standalone binary: ruah-conv
 `;
+}
 
 // ── Main ─────────────────────────────────────────────────────────────
 
@@ -95,19 +107,19 @@ async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
 
 	if (args.flags.help || args.flags.h) {
-		console.log(HELP.trim());
+		console.log(buildHelp().trim());
 		return;
 	}
 
 	if (args.flags.version || args.flags.v) {
-		console.log(`ruah conv v${getVersion()}`);
+		console.log(`ruah-conv v${getVersion()}`);
 		return;
 	}
 
 	const command = args._[0];
 
 	if (!command) {
-		console.log(HELP.trim());
+		console.log(buildHelp().trim());
 		return;
 	}
 
