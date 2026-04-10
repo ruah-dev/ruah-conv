@@ -272,7 +272,6 @@ npx @ruah-dev/conv <command>
 ## Ecosystem
 
 ```
-crag  — governance, discovery, skills, compilation    (@whitehatd/crag)
 ruah  — top-level CLI router                          (@ruah-dev/cli)
 orch  — multi-agent orchestration                     (@ruah-dev/orch)
 conv  — API spec → agent tool surfaces                (@ruah-dev/conv)
