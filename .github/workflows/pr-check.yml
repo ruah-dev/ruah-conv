@@ -18,12 +18,13 @@ jobs:
           node-version: '20'
 
       - run: npm ci
+      - run: npm ci --prefix packages/core
 
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
       - name: Lint
-        run: npx biome check .
+        run: npm run lint
 
       - name: Test
         run: npm test

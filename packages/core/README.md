@@ -300,33 +300,28 @@ npm install -g @ruah-dev/conv
 ruah-conv generate ./spec.yaml --json
 
 # or run without installing
-npx @ruah-dev/conv generate ./spec.yaml --json
+npx @ruah-dev/conv <command>
 ```
 
 **Requirements:** Node.js 18+. Single runtime dependency: `yaml`.
 
 ## Release Flow
 
-Releases are tag-driven:
+The repository release is tag-driven from the root package:
 
 ```bash
 git push origin main
 git push origin v0.2.0
 ```
 
-Pushing a `v*` tag triggers the GitHub Actions release pipeline, which:
-- runs typecheck, lint, and tests for the root package and `packages/core`
-- publishes `@ruah-dev/conv-core` first
-- waits for that version to appear on npm
-- publishes `@ruah-dev/conv`
-- creates the GitHub release automatically
+The `v*` tag workflow validates the repo, publishes `@ruah-dev/conv-core`, then publishes `@ruah-dev/conv`, and creates the GitHub release.
 
 ## Ecosystem
 
 ```
-ruah       — top-level CLI router                    (@ruah-dev/cli)
-conv       — standalone conv package + CLI wrapper   (@ruah-dev/conv)
-conv-core  — conversion implementation               (@ruah-dev/conv-core)
+ruah  — top-level CLI router                          (@ruah-dev/cli)
+orch  — multi-agent orchestration                     (@ruah-dev/orch)
+conv  — API spec → agent tool surfaces                (@ruah-dev/conv)
 ```
 
 ## Community

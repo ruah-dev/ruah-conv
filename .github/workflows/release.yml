@@ -24,18 +24,19 @@ jobs:
           node-version: '20'
 
       - run: npm ci
+      - run: npm ci --prefix packages/core
 
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
       - name: Lint
-        run: npx biome check .
+        run: npm run lint
 
       - name: Test
         run: npm test
 
   publish-npm:
-    name: Publish to npm
+    name: Publish Packages to npm
     needs: test
     runs-on: ubuntu-latest
     permissions:
@@ -51,9 +52,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - run: npm ci
-
-      - name: Build
-        run: npm run build
+      - run: npm ci --prefix packages/core
 
       - name: Determine npm dist-tag
         id: npm-tag
@@ -66,14 +65,46 @@ jobs:
             echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish with provenance
+      - name: Build
+        run: npm run build
+
+      - name: Publish core with provenance
+        run: npm publish --access public --provenance --tag "${{ steps.npm-tag.outputs.dist_tag }}"
+        working-directory: packages/core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Wait for core package to be visible
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          for attempt in {1..20}; do
+            if npm view "@ruah-dev/conv-core@$VERSION" version >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Timed out waiting for @ruah-dev/conv-core@$VERSION to be available on npm."
+          exit 1
+
+      - name: Rewrite root manifest for registry publish
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          VERSION="$VERSION" node <<'EOF'
+          const fs = require("node:fs");
+          const version = process.env.VERSION;
+          const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          packageJson.dependencies["@ruah-dev/conv-core"] = version;
+          fs.writeFileSync("package.json", JSON.stringify(packageJson, null, "\t") + "\n");
+          EOF
+
+      - name: Publish root package with provenance
         run: npm publish --access public --provenance --tag "${{ steps.npm-tag.outputs.dist_tag }}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   github-release:
     name: GitHub Release
-    needs: test
+    needs: publish-npm
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

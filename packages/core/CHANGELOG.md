@@ -15,20 +15,13 @@ All notable changes to this project will be documented in this file.
 - A2A wrapper scaffold generator
 - Config file support via `ruah.conv.json`, `.ruah-conv.json`, and `ruah.conv.config.json`
 - Pagination detection metadata for common offset/page/cursor patterns
-- Standalone `ruah-conv` bin entry for the published package
-- Expanded automated validation for generated TS, Python, and A2A scaffolds
+- Stronger artifact validation for generated TypeScript, Python, and A2A outputs
 
 ### Changed
 
 - Updated the README and CLI docs to reflect the shipped v0.2 surface
 - Hardened the generated MCP TS/A2A scaffolds around auth, request bodies, and HTTP transport wiring
-- Reworked GitHub Actions so release CI validates both the root package and `packages/core`
-- Updated tag-based release automation to publish `@ruah-dev/conv-core` before `@ruah-dev/conv`
 - Increased automated coverage from 47 to 60 passing tests
-
-### Removed
-
-- Removed the Reddit launch draft from the repository
 
 ## [0.1.0] - 2026-04-10
 

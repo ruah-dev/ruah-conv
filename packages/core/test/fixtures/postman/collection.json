@@ -1,0 +1,51 @@
+{
+	"info": {
+		"name": "Billing Collection",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [{ "key": "baseUrl", "value": "https://billing.example.com" }],
+	"auth": {
+		"type": "bearer",
+		"bearer": [{ "key": "token", "value": "{{token}}" }]
+	},
+	"item": [
+		{
+			"name": "Invoices",
+			"item": [
+				{
+					"name": "list invoices",
+					"request": {
+						"method": "GET",
+						"url": {
+							"raw": "{{baseUrl}}/invoices?limit=10&offset=0",
+							"path": ["invoices"],
+							"query": [
+								{ "key": "limit", "value": "10" },
+								{ "key": "offset", "value": "0" }
+							]
+						}
+					}
+				},
+				{
+					"name": "create invoice",
+					"request": {
+						"method": "POST",
+						"url": {
+							"raw": "{{baseUrl}}/invoices",
+							"path": ["invoices"]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\"customerId\":\"cus_123\",\"total\":42}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					}
+				}
+			]
+		}
+	]
+}

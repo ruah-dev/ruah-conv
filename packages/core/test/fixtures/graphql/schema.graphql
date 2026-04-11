@@ -1,0 +1,21 @@
+scalar DateTime
+
+type Query {
+	listUsers(limit: Int, offset: Int): [User!]!
+	getUser(id: ID!): User
+}
+
+type Mutation {
+	createUser(input: CreateUserInput!): User!
+}
+
+type User {
+	id: ID!
+	email: String!
+	createdAt: DateTime!
+}
+
+input CreateUserInput {
+	email: String!
+	name: String
+}

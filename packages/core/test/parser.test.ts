@@ -15,6 +15,27 @@ const PETSTORE = resolve(
 	"clean",
 	"petstore.yaml",
 );
+const SWAGGER = resolve(
+	PROJECT_ROOT,
+	"test",
+	"fixtures",
+	"swagger",
+	"store.json",
+);
+const POSTMAN = resolve(
+	PROJECT_ROOT,
+	"test",
+	"fixtures",
+	"postman",
+	"collection.json",
+);
+const GRAPHQL = resolve(
+	PROJECT_ROOT,
+	"test",
+	"fixtures",
+	"graphql",
+	"schema.graphql",
+);
 
 describe("detectFormat", () => {
 	it("detects OpenAPI 3.0", () => {
@@ -35,12 +56,22 @@ describe("detectFormat", () => {
 		assert.equal(detectFormat("just some text"), null);
 	});
 
-	it("returns null for Swagger 2.0", () => {
+	it("detects Swagger 2.0", () => {
 		const content = JSON.stringify({
 			swagger: "2.0",
 			info: { title: "Test", version: "1.0" },
 		});
-		assert.equal(detectFormat(content), null);
+		assert.equal(detectFormat(content), "swagger-2.0");
+	});
+
+	it("detects Postman v2.1 collections", () => {
+		const content = readFileSync(POSTMAN, "utf8");
+		assert.equal(detectFormat(content), "postman-v2.1");
+	});
+
+	it("detects GraphQL SDL from file extension", () => {
+		const content = readFileSync(GRAPHQL, "utf8");
+		assert.equal(detectFormat(content, GRAPHQL), "graphql-sdl");
 	});
 });
 
@@ -84,11 +115,11 @@ describe("parse petstore.yaml", () => {
 
 	it("extracts query parameters for listPets", () => {
 		const ir = parse(PETSTORE);
-		const listPets = ir.tools.find((t) => t.name === "listPets")!;
+		const listPets = mustFindTool(ir, "listPets");
 		assert.ok(listPets);
 		assert.equal(listPets.parameters.length, 2);
 
-		const limit = listPets.parameters.find((p) => p.name === "limit")!;
+		const limit = mustFindParameter(listPets, "limit");
 		assert.equal(limit.in, "query");
 		assert.equal(limit.required, false);
 		assert.equal(limit.schema.kind, "integer");
@@ -96,10 +127,10 @@ describe("parse petstore.yaml", () => {
 
 	it("extracts path parameters from shared path-level definition", () => {
 		const ir = parse(PETSTORE);
-		const getPet = ir.tools.find((t) => t.name === "getPet")!;
+		const getPet = mustFindTool(ir, "getPet");
 		assert.ok(getPet);
 
-		const petId = getPet.parameters.find((p) => p.name === "petId")!;
+		const petId = mustFindParameter(getPet, "petId");
 		assert.ok(petId);
 		assert.equal(petId.in, "path");
 		assert.equal(petId.required, true);
@@ -107,7 +138,7 @@ describe("parse petstore.yaml", () => {
 
 	it("extracts request body for createPet", () => {
 		const ir = parse(PETSTORE);
-		const createPet = ir.tools.find((t) => t.name === "createPet")!;
+		const createPet = mustFindTool(ir, "createPet");
 		assert.ok(createPet.requestBody);
 		assert.equal(createPet.requestBody.required, true);
 		assert.equal(createPet.requestBody.contentType, "application/json");
@@ -124,9 +155,9 @@ describe("parse petstore.yaml", () => {
 
 	it("classifies risk levels correctly", () => {
 		const ir = parse(PETSTORE);
-		const listPets = ir.tools.find((t) => t.name === "listPets")!;
-		const createPet = ir.tools.find((t) => t.name === "createPet")!;
-		const deletePet = ir.tools.find((t) => t.name === "deletePet")!;
+		const listPets = mustFindTool(ir, "listPets");
+		const createPet = mustFindTool(ir, "createPet");
+		const deletePet = mustFindTool(ir, "deletePet");
 
 		assert.equal(listPets.riskLevel, "safe");
 		assert.equal(createPet.riskLevel, "moderate");
@@ -135,8 +166,8 @@ describe("parse petstore.yaml", () => {
 
 	it("marks read-only and idempotent correctly", () => {
 		const ir = parse(PETSTORE);
-		const listPets = ir.tools.find((t) => t.name === "listPets")!;
-		const createPet = ir.tools.find((t) => t.name === "createPet")!;
+		const listPets = mustFindTool(ir, "listPets");
+		const createPet = mustFindTool(ir, "createPet");
 
 		assert.equal(listPets.readOnly, true);
 		assert.equal(listPets.idempotent, true);
@@ -146,7 +177,7 @@ describe("parse petstore.yaml", () => {
 
 	it("resolves auth references on tools", () => {
 		const ir = parse(PETSTORE);
-		const listPets = ir.tools.find((t) => t.name === "listPets")!;
+		const listPets = mustFindTool(ir, "listPets");
 		assert.ok(listPets.auth);
 		assert.ok(listPets.auth.includes("apiKeyAuth"));
 	});
@@ -157,3 +188,58 @@ describe("parse error cases", () => {
 		assert.throws(() => parse("/does/not/exist.yaml"), /ENOENT/);
 	});
 });
+
+describe("parse swagger 2.0", () => {
+	it("auto-upgrades Swagger 2.0 into the shared IR", () => {
+		const ir = parse(SWAGGER);
+
+		assert.equal(ir.meta.sourceFormat, "swagger-2.0");
+		assert.equal(ir.meta.baseUrl, "https://api.example.com/v1");
+		assert.ok(ir.types.Item);
+		assert.equal(ir.tools.length, 1);
+		assert.equal(ir.tools[0].name, "listItems");
+		assert.equal(ir.tools[0].pagination?.style, "offset-limit");
+	});
+});
+
+describe("parse Postman collection", () => {
+	it("extracts tools and auth", () => {
+		const ir = parse(POSTMAN);
+
+		assert.equal(ir.meta.sourceFormat, "postman-v2.1");
+		assert.equal(ir.meta.baseUrl, "https://billing.example.com");
+		assert.equal(ir.auth.length, 1);
+		assert.equal(ir.tools.length, 2);
+		assert.ok(ir.tools.some((tool) => tool.name === "listInvoices"));
+		assert.ok(ir.tools.some((tool) => tool.name === "createInvoice"));
+	});
+});
+
+describe("parse GraphQL SDL", () => {
+	it("creates tools from queries and mutations", () => {
+		const ir = parse(GRAPHQL);
+
+		assert.equal(ir.meta.sourceFormat, "graphql-sdl");
+		assert.equal(ir.tools.length, 3);
+		assert.ok(ir.tools.some((tool) => tool.name === "listUsers"));
+		assert.ok(ir.tools.some((tool) => tool.name === "getUser"));
+		assert.ok(ir.tools.some((tool) => tool.name === "createUser"));
+		assert.ok(ir.types.User);
+		assert.ok(ir.types.CreateUserInput);
+	});
+});
+
+function mustFindTool(ir: ReturnType<typeof parse>, name: string) {
+	const tool = ir.tools.find((entry) => entry.name === name);
+	assert.ok(tool, `expected tool "${name}" to exist`);
+	return tool;
+}
+
+function mustFindParameter(
+	tool: ReturnType<typeof mustFindTool>,
+	name: string,
+) {
+	const parameter = tool.parameters.find((entry) => entry.name === name);
+	assert.ok(parameter, `expected parameter "${name}" to exist`);
+	return parameter;
+}
