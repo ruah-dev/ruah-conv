@@ -37,6 +37,8 @@ describe("getTargets", () => {
 		assert.ok(targets.some((t) => t.id === "openai-tools"));
 		assert.ok(targets.some((t) => t.id === "anthropic-tools"));
 		assert.ok(targets.some((t) => t.id === "a2a-wrapper"));
+		assert.ok(targets.some((t) => t.id === "claude-code-plugin-ts"));
+		assert.ok(targets.some((t) => t.id === "codex-plugin-ts"));
 	});
 });
 
@@ -250,6 +252,114 @@ describe("generate new roadmap targets", () => {
 			},
 		);
 		assert.equal(nodeCheck.status, 0, nodeCheck.stderr);
+	});
+
+	it("generates a Claude Code plugin scaffold", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("claude-code-plugin-ts", ir, {
+			name: "Petstore Plugin",
+		});
+
+		assert.ok(
+			result.files.some((file) => file.path === ".claude-plugin/plugin.json"),
+		);
+		assert.ok(result.files.some((file) => file.path === ".mcp.json"));
+
+		const manifestFile = result.files.find(
+			(file) => file.path === ".claude-plugin/plugin.json",
+		);
+		assert.ok(manifestFile);
+		const manifest = JSON.parse(manifestFile.content) as {
+			name: string;
+			mcpServers: string;
+		};
+		assert.equal(manifest.name, "petstore-plugin");
+		assert.equal(manifest.mcpServers, "./.mcp.json");
+
+		const mcpFile = result.files.find((file) => file.path === ".mcp.json");
+		assert.ok(mcpFile);
+		const mcpConfig = JSON.parse(mcpFile.content) as {
+			mcpServers: Record<
+				string,
+				{
+					type: string;
+					command: string;
+					args: string[];
+					env: Record<string, string>;
+				}
+			>;
+		};
+		assert.equal(mcpConfig.mcpServers["petstore-plugin"].type, "stdio");
+		assert.equal(mcpConfig.mcpServers["petstore-plugin"].command, "node");
+		assert.equal(
+			mcpConfig.mcpServers["petstore-plugin"].args[0],
+			String.raw`\${CLAUDE_PLUGIN_ROOT}/dist/index.js`,
+		);
+
+		for (const file of result.files.filter((file) =>
+			file.path.endsWith(".ts"),
+		)) {
+			const transpiled = ts.transpileModule(file.content, {
+				compilerOptions: {
+					module: ts.ModuleKind.Node16,
+					target: ts.ScriptTarget.ES2022,
+				},
+				reportDiagnostics: true,
+				fileName: file.path,
+			});
+			assert.equal(
+				transpiled.diagnostics?.length ?? 0,
+				0,
+				`expected ${file.path} to transpile without syntax diagnostics`,
+			);
+		}
+	});
+
+	it("generates a Codex plugin scaffold", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("codex-plugin-ts", ir, {
+			name: "Petstore Plugin",
+		});
+
+		assert.ok(
+			result.files.some((file) => file.path === ".codex-plugin/plugin.json"),
+		);
+		assert.ok(result.files.some((file) => file.path === ".mcp.json"));
+
+		const manifestFile = result.files.find(
+			(file) => file.path === ".codex-plugin/plugin.json",
+		);
+		assert.ok(manifestFile);
+		const manifest = JSON.parse(manifestFile.content) as {
+			name: string;
+			mcpServers: string;
+			interface: { displayName: string; defaultPrompt: string[] };
+		};
+		assert.equal(manifest.name, "petstore-plugin");
+		assert.equal(manifest.mcpServers, "./.mcp.json");
+		assert.equal(manifest.interface.displayName, "Petstore Plugin");
+		assert.equal(manifest.interface.defaultPrompt.length, 3);
+
+		const mcpFile = result.files.find((file) => file.path === ".mcp.json");
+		assert.ok(mcpFile);
+		const mcpConfig = JSON.parse(mcpFile.content) as {
+			mcpServers: Record<
+				string,
+				{
+					type: string;
+					command: string;
+					args: string[];
+					env: Record<string, string>;
+				}
+			>;
+		};
+		assert.equal(mcpConfig.mcpServers["petstore-plugin"].type, "stdio");
+		assert.equal(mcpConfig.mcpServers["petstore-plugin"].command, "node");
+		assert.equal(
+			mcpConfig.mcpServers["petstore-plugin"].args[0],
+			"./dist/index.js",
+		);
+		assert.ok(result.summary.warnings.length > 0);
 	});
 });
 

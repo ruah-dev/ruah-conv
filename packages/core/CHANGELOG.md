@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-04-14
+
+### Added
+
+- Claude Code plugin scaffold generator with `.claude-plugin/plugin.json` and `.mcp.json`
+- Codex plugin scaffold generator with `.codex-plugin/plugin.json` and `.mcp.json`
+
+### Changed
+
+- Updated the README and target docs to cover the plugin scaffold outputs
+
 ## [0.2.0] - 2026-04-11
 
 ### Added

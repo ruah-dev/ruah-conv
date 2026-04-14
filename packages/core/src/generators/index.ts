@@ -7,6 +7,10 @@ import { generate as generateMcpPythonServer } from "./mcp-server-python/index.j
 import { generate as generateMcpTsServer } from "./mcp-server-ts/index.js";
 import { generate as generateMcpToolDefs } from "./mcp-ts/index.js";
 import { generate as generateOpenAITools } from "./openai/index.js";
+import {
+	generateClaudeCodePlugin,
+	generateCodexPlugin,
+} from "./plugin-ts/index.js";
 
 // ── Public types ─────────────────────────────────────────────────────
 
@@ -75,6 +79,18 @@ const TARGETS: GeneratorInfo[] = [
 		name: "A2A Wrapper",
 		description: "Service wrapper scaffold for agent-to-agent style invocation",
 	},
+	{
+		id: "claude-code-plugin-ts",
+		name: "Claude Code Plugin",
+		description:
+			"Claude Code plugin scaffold with a TypeScript MCP server and plugin manifest",
+	},
+	{
+		id: "codex-plugin-ts",
+		name: "Codex Plugin",
+		description:
+			"Codex plugin scaffold with a TypeScript MCP server and plugin manifest",
+	},
 ];
 
 /**
@@ -105,6 +121,10 @@ export function generate(
 			return generateAnthropicTools(spec);
 		case "a2a-wrapper":
 			return generateA2AWrapper(spec, options);
+		case "claude-code-plugin-ts":
+			return generateClaudeCodePlugin(spec, options);
+		case "codex-plugin-ts":
+			return generateCodexPlugin(spec, options);
 		default:
 			throw new Error(
 				`Unknown target: "${targetId}". Available: ${TARGETS.map((t) => t.id).join(", ")}`,

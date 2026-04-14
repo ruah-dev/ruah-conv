@@ -6,7 +6,7 @@
 
 **Convert API specs into agent-ready tool surfaces.**
 
-Feed it an OpenAPI spec, get MCP tool definitions, function-calling schemas, or a full MCP server scaffold. One intermediate representation in the middle — every input parser normalizes to it, every output generator reads from it.
+Feed it an OpenAPI spec, get MCP tool definitions, function-calling schemas, host-ready plugin bundles, or a full MCP server scaffold. One intermediate representation in the middle — every input parser normalizes to it, every output generator reads from it.
 
 ```
  Input Parsers              IR                    Output Generators
@@ -16,15 +16,17 @@ Feed it an OpenAPI spec, get MCP tool definitions, function-calling schemas, or 
  Postman v2.1 ──┼──→  Ruah Tool Schema  ───┼── MCP Server (Python) ✓
  GraphQL SDL  ──┤     (canonical IR)         ├── Function Calling (OpenAI) ✓
  HAR files    ──┘                            ├── Function Calling (Anthropic) ✓
+                                             ├── Claude Code plugin bundle ✓
+                                             ├── Codex plugin bundle ✓
                                              └── A2A service wrapper ✓
 ```
 
-**Now shipped:** OpenAPI 3.x, Swagger 2.0, Postman v2.1, and GraphQL SDL inputs; MCP JSON defs; MCP TypeScript/Python scaffolds; OpenAI and Anthropic tool schemas; A2A wrapper scaffold; config-file support.
+**Now shipped:** OpenAPI 3.x, Swagger 2.0, Postman v2.1, and GraphQL SDL inputs; MCP JSON defs; MCP TypeScript/Python scaffolds; OpenAI and Anthropic tool schemas; Claude Code and Codex plugin scaffolds; A2A wrapper scaffold; config-file support.
 
 ## See It
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ruah-dev/ruah-conv/main/.github/demo.gif" alt="ruah conv demo" width="100%" />
+  <img src="https://ruah.sh/demos/ruah-conv-demo.gif" alt="ruah-conv — inspect, validate, and generate MCP tool definitions from API specs" width="100%" />
 </p>
 
 ```bash
@@ -98,6 +100,12 @@ ruah conv generate ./spec.yaml --target openai-tools --json
 # Generate a TypeScript MCP server scaffold
 ruah conv generate ./spec.yaml --target mcp-ts-server --output ./generated-server
 
+# Generate a Claude Code plugin bundle
+ruah conv generate ./spec.yaml --target claude-code-plugin-ts --output ./generated-claude-plugin
+
+# Generate a Codex plugin bundle
+ruah conv generate ./spec.yaml --target codex-plugin-ts --output ./generated-codex-plugin
+
 # Write output to a directory
 ruah conv generate ./spec.yaml --output ./generated/
 
@@ -159,6 +167,8 @@ Current targets:
 - `mcp-python-server` — FastMCP Python server scaffold
 - `openai-tools` — OpenAI tool/function definitions
 - `anthropic-tools` — Anthropic tool definitions
+- `claude-code-plugin-ts` — Claude Code plugin scaffold with a generated TypeScript MCP server
+- `codex-plugin-ts` — Codex plugin scaffold with a generated TypeScript MCP server
 - `a2a-wrapper` — A2A-style service wrapper scaffold
 
 Each tool gets:
@@ -283,6 +293,7 @@ Generator defaults can live in `ruah.conv.json`, `.ruah-conv.json`, or `ruah.con
 - [x] GraphQL SDL parser
 - [x] A2A service wrapper
 - [x] Config file support
+- [x] Claude Code and Codex plugin bundle targets
 
 ## Install
 
@@ -311,7 +322,7 @@ Releases are tag-driven:
 
 ```bash
 git push origin main
-git push origin v0.2.0
+git push origin v0.3.0
 ```
 
 Pushing a `v*` tag triggers the GitHub Actions release pipeline, which:
