@@ -1,11 +1,19 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { ParsedArgs } from "../cli.js";
 import { loadConfig } from "../config.js";
 import { generate, getTargets } from "../generators/index.js";
+import {
+	applyOperationProfile,
+	buildEmptyOperationProfileError,
+	countExcludedToolsByOperationProfile,
+	parseOperationProfile,
+} from "../generators/operation-profile.js";
 import { validateIR } from "../ir/validate.js";
 import { parse } from "../parsers/index.js";
-import { logError, logSuccess, logWarn } from "../utils/format.js";
+import { logError, logInfo, logSuccess, logWarn } from "../utils/format.js";
+import { resolveOperationProfile } from "./generate-profile.js";
+import { promptForOperationProfile } from "./generate-prompt.js";
 
 export async function run(args: ParsedArgs): Promise<void> {
 	const specFile = args._[1];
@@ -35,6 +43,14 @@ export async function run(args: ParsedArgs): Promise<void> {
 			| "sse"
 			| "all"
 			| undefined) ?? config.transport;
+	const explicitOperationProfile = parseOperationProfile(
+		args.named["operation-profile"] as string | undefined,
+		"--operation-profile",
+	);
+	const configOperationProfile = parseOperationProfile(
+		config.operationProfile,
+		"config operationProfile",
+	);
 
 	// Validate target
 	const targets = getTargets();
@@ -47,9 +63,36 @@ export async function run(args: ParsedArgs): Promise<void> {
 
 	// Parse
 	const ir = parse(specFile);
+	const profileResolution = resolveOperationProfile({
+		sourceFormat: ir.meta.sourceFormat,
+		jsonMode,
+		stdinIsTTY: process.stdin.isTTY === true,
+		stdoutIsTTY: process.stdout.isTTY === true,
+		ci: Boolean(process.env.CI),
+		explicitProfile: explicitOperationProfile,
+		configProfile: configOperationProfile,
+	});
+
+	const operationProfile =
+		profileResolution.kind === "prompt"
+			? await promptForOperationProfile(ir)
+			: profileResolution.kind === "resolved"
+				? profileResolution.profile
+				: undefined;
+	const filteredIr = operationProfile
+		? applyOperationProfile(ir, operationProfile)
+		: ir;
+	const excludedOperationCount = operationProfile
+		? countExcludedToolsByOperationProfile(ir.tools, operationProfile)
+		: 0;
+
+	if (operationProfile && filteredIr.tools.length === 0) {
+		logError(buildEmptyOperationProfileError(operationProfile));
+		process.exit(1);
+	}
 
 	// Validate and warn
-	const warnings = validateIR(ir);
+	const warnings = validateIR(filteredIr);
 	if (!jsonMode) {
 		for (const w of warnings) {
 			logWarn(`${w.path}: ${w.message}`);
@@ -62,10 +105,16 @@ export async function run(args: ParsedArgs): Promise<void> {
 		transport,
 		outputPath: outputDir,
 		json: jsonMode,
+		operationProfile,
 	});
 
 	if (jsonMode) {
-		// In JSON mode, output the first file's content directly to stdout
+		if (result.files.length > 1) {
+			logError(
+				`--json is not supported for multi-file target "${targetId}" (would emit ${result.files.length} files). Use --output <dir> instead.`,
+			);
+			process.exit(1);
+		}
 		const mainFile = result.files[0];
 		if (mainFile) {
 			process.stdout.write(mainFile.content);
@@ -81,6 +130,7 @@ export async function run(args: ParsedArgs): Promise<void> {
 
 		for (const file of result.files) {
 			const filePath = resolve(absOutput, file.path);
+			mkdirSync(dirname(filePath), { recursive: true });
 			writeFileSync(filePath, file.content, "utf8");
 			logSuccess(`Written: ${filePath}`);
 		}
@@ -95,6 +145,14 @@ export async function run(args: ParsedArgs): Promise<void> {
 	if (!jsonMode) {
 		console.log();
 		logSuccess(`Generated ${result.summary.toolCount} tools → ${targetId}`);
+		if (operationProfile) {
+			const noun = excludedOperationCount === 1 ? "operation" : "operations";
+			const excluded =
+				excludedOperationCount > 0
+					? ` (excluded ${excludedOperationCount} ${noun})`
+					: "";
+			logInfo(`Operation profile: ${operationProfile}${excluded}`);
+		}
 		if (warnings.length > 0) {
 			logWarn(
 				`${warnings.length} warning(s) — run 'ruah conv validate' for details`,

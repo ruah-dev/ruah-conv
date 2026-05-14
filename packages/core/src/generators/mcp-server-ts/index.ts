@@ -130,23 +130,37 @@ function buildSharedServerSource(
       description: ${JSON.stringify(tool.description)},
       inputSchema: ${buildZodShape(props, (tool.inputSchema.required as string[]) ?? [])}
     },
-    async (args) => invokeOperation(OPERATIONS[${JSON.stringify(tool.name)}], args)
+    async (args) => invokeOperation(OPERATIONS[${JSON.stringify(tool.name)}] as Operation, args)
   );`;
 		})
 		.join("\n\n");
 
 	return `import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 export const API_BASE_URL = process.env.API_BASE_URL ?? ${JSON.stringify(baseUrl ?? "http://localhost:3000")};
 
-export const OPERATIONS = ${JSON.stringify(
+type ParamLocation = "query" | "path" | "header" | "cookie";
+
+export type Operation = {
+  name: string;
+  description: string;
+  method: string;
+  path: string;
+  parameters: ReadonlyArray<{ name: string; in: ParamLocation; required: boolean }>;
+  requestBody?: { required: boolean; contentType: string; schema: unknown };
+  flattenedBody: boolean;
+  auth: ReadonlyArray<string>;
+};
+
+export const OPERATIONS: Record<string, Operation> = ${JSON.stringify(
 		Object.fromEntries(
 			operations.map((operation) => [operation.name, operation]),
 		),
 		null,
 		2,
-	)} as const;
+	)};
 
 export function createServer() {
   const server = new McpServer({
@@ -160,9 +174,9 @@ ${registrations}
 }
 
 async function invokeOperation(
-  operation: (typeof OPERATIONS)[keyof typeof OPERATIONS],
+  operation: Operation,
   args: Record<string, unknown>,
-) {
+): Promise<CallToolResult> {
   const url = new URL(interpolatePath(operation.path, args), API_BASE_URL);
   const headers: Record<string, string> = {};
 
@@ -226,14 +240,16 @@ async function invokeOperation(
   if (!response.ok) {
     return {
       isError: true,
-      content: [{ type: "text", text: output }],
+      content: [{ type: "text" as const, text: output }],
     };
   }
 
   return {
-    content: [{ type: "text", text: output }],
+    content: [{ type: "text" as const, text: output }],
     structuredContent:
-      typeof data === "object" && data !== null ? data : undefined,
+      typeof data === "object" && data !== null
+        ? (data as { [key: string]: unknown })
+        : undefined,
   };
 }
 

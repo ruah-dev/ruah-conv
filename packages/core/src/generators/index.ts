@@ -8,6 +8,11 @@ import { generate as generateMcpTsServer } from "./mcp-server-ts/index.js";
 import { generate as generateMcpToolDefs } from "./mcp-ts/index.js";
 import { generate as generateOpenAITools } from "./openai/index.js";
 import {
+	applyOperationProfile,
+	buildEmptyOperationProfileError,
+	type OperationProfile,
+} from "./operation-profile.js";
+import {
 	generateClaudeCodePlugin,
 	generateCodexPlugin,
 } from "./plugin-ts/index.js";
@@ -25,6 +30,7 @@ export interface GenerateOptions {
 	json?: boolean;
 	name?: string;
 	transport?: "stdio" | "streamable-http" | "sse" | "all";
+	operationProfile?: OperationProfile;
 }
 
 export interface GenerateResult {
@@ -108,23 +114,31 @@ export function generate(
 	spec: RuahToolSchema,
 	options?: GenerateOptions,
 ): GenerateResult {
+	const nextSpec = options?.operationProfile
+		? applyOperationProfile(spec, options.operationProfile)
+		: spec;
+
+	if (options?.operationProfile && nextSpec.tools.length === 0) {
+		throw new Error(buildEmptyOperationProfileError(options.operationProfile));
+	}
+
 	switch (targetId) {
 		case "mcp-tool-defs":
-			return generateMcpToolDefs(spec);
+			return generateMcpToolDefs(nextSpec);
 		case "mcp-ts-server":
-			return generateMcpTsServer(spec, options);
+			return generateMcpTsServer(nextSpec, options);
 		case "mcp-python-server":
-			return generateMcpPythonServer(spec, options);
+			return generateMcpPythonServer(nextSpec, options);
 		case "openai-tools":
-			return generateOpenAITools(spec);
+			return generateOpenAITools(nextSpec);
 		case "anthropic-tools":
-			return generateAnthropicTools(spec);
+			return generateAnthropicTools(nextSpec);
 		case "a2a-wrapper":
-			return generateA2AWrapper(spec, options);
+			return generateA2AWrapper(nextSpec, options);
 		case "claude-code-plugin-ts":
-			return generateClaudeCodePlugin(spec, options);
+			return generateClaudeCodePlugin(nextSpec, options);
 		case "codex-plugin-ts":
-			return generateCodexPlugin(spec, options);
+			return generateCodexPlugin(nextSpec, options);
 		default:
 			throw new Error(
 				`Unknown target: "${targetId}". Available: ${TARGETS.map((t) => t.id).join(", ")}`,

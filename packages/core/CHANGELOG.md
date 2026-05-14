@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-05-15
+
+### Added
+
+- `--operation-profile` flag (`read-only`, `standard`, `all`) with interactive TTY prompt and `operationProfile` config-file key
+
+### Fixed
+
+- Multi-file scaffold targets (`mcp-ts-server`, `a2a-wrapper`, `claude-code-plugin-ts`, `codex-plugin-ts`) no longer crash when writing nested `src/` paths via `--output`
+- Generated TS scaffolds typecheck under `strict: true`: typed `Operation` interface replaces `as const` over-narrowing, `invokeOperation` returns `Promise<CallToolResult>`, content blocks use `type: "text" as const`
+- `generate --json` rejects multi-file targets explicitly instead of silently emitting only the first file
+
 ## [0.3.0] - 2026-04-14
 
 ### Added

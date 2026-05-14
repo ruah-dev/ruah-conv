@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-05-15
+
+### Added
+
+- `--operation-profile` flag with `read-only`, `standard`, and `all` presets, an interactive prompt when running OpenAPI specs in a TTY, and matching `operationProfile` support in `ruah.conv.json`
+
+### Fixed
+
+- `generate --output <dir>` now creates nested parent directories, unblocking the `mcp-ts-server`, `a2a-wrapper`, `claude-code-plugin-ts`, and `codex-plugin-ts` targets that previously crashed with `ENOENT`
+- Generated TypeScript MCP server / Claude Code / Codex plugin scaffolds now typecheck cleanly under `strict: true` — `OPERATIONS` is typed via an explicit `Operation` interface (no more `as const` over-narrowing), `invokeOperation` returns `Promise<CallToolResult>`, and content blocks use `type: "text" as const`
+- `generate --json` now errors with a clear message when used on multi-file scaffold targets instead of silently emitting only the first file
+
 ## [0.3.0] - 2026-04-14
 
 ### Added

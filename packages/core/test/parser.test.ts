@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -162,6 +163,41 @@ describe("parse petstore.yaml", () => {
 		assert.equal(listPets.riskLevel, "safe");
 		assert.equal(createPet.riskLevel, "moderate");
 		assert.equal(deletePet.riskLevel, "destructive");
+	});
+
+	it("classifies PATCH operations as destructive", () => {
+		const dir = mkdtempSync(resolve(tmpdir(), "ruah-conv-parser-"));
+		const specFile = resolve(dir, "patch.yaml");
+		writeFileSync(
+			specFile,
+			[
+				'openapi: "3.0.3"',
+				"info:",
+				"  title: Patch API",
+				'  version: "1.0.0"',
+				"paths:",
+				"  /pets/{petId}:",
+				"    patch:",
+				"      operationId: updatePet",
+				"      requestBody:",
+				"        required: true",
+				"        content:",
+				"          application/json:",
+				"            schema:",
+				"              type: object",
+				"              properties:",
+				"                tag:",
+				"                  type: string",
+				"      responses:",
+				'        "200":',
+				"          description: Updated",
+			].join("\n"),
+			"utf8",
+		);
+
+		const ir = parse(specFile);
+		const updatePet = mustFindTool(ir, "updatePet");
+		assert.equal(updatePet.riskLevel, "destructive");
 	});
 
 	it("marks read-only and idempotent correctly", () => {

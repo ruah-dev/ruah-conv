@@ -100,6 +100,10 @@ ruah conv generate ./spec.yaml --target openai-tools --json
 # Generate a TypeScript MCP server scaffold
 ruah conv generate ./spec.yaml --target mcp-ts-server --output ./generated-server
 
+# Force a safer or broader OpenAPI/Swagger operation preset
+ruah conv generate ./spec.yaml --operation-profile read-only
+ruah conv generate ./spec.yaml --operation-profile all
+
 # Generate a Claude Code plugin bundle
 ruah conv generate ./spec.yaml --target claude-code-plugin-ts --output ./generated-claude-plugin
 
@@ -161,6 +165,8 @@ ruah conv validate ./spec.yaml
 
 The generator reads the IR and produces output for the target format.
 
+For OpenAPI 3.x and Swagger 2.0 inputs, `generate` now asks which operation preset to expose unless you set `--operation-profile`, configure `operationProfile`, or run non-interactively. Non-interactive runs default to `standard`.
+
 Current targets:
 - `mcp-tool-defs` — JSON array of MCP-compatible tool definitions
 - `mcp-ts-server` — TypeScript MCP server scaffold with stdio entrypoint and HTTP starter
@@ -177,6 +183,11 @@ Each tool gets:
 - **inputSchema** — JSON Schema combining path params, query params, and request body
 
 Paginated operations are detected heuristically and annotated in generated descriptions. Current patterns: `limit` + `offset`, page-number/page-size, and cursor-style query params.
+
+OpenAPI/Swagger operation presets:
+- `read-only` — includes `GET`, `HEAD`, `OPTIONS`
+- `standard` — includes `read-only` plus `POST`, `PUT`
+- `all` — includes `standard` plus `PATCH`, `DELETE`
 
 ### 4. Naming Policy
 
@@ -197,7 +208,7 @@ Every tool gets a risk level based on HTTP method:
 | GET, HEAD, OPTIONS | `safe` | Yes | Yes |
 | POST | `moderate` | No | No |
 | PUT | `moderate` | Yes | No |
-| PATCH | `moderate` | No | No |
+| PATCH | `destructive` | No | No |
 | DELETE | `destructive` | Yes | No |
 
 ## The IR: Ruah Tool Schema
@@ -241,6 +252,7 @@ ruah conv generate <spec> [options]    Parse spec and generate output
   --output <dir>                         Output directory (default: stdout)
   --name <value>                         Override generated server/service name
   --transport <mode>                     Generator transport hint
+  --operation-profile <profile>          OpenAPI/Swagger preset: read-only, standard, all
   --config <path>                        Load generation defaults from JSON
   --json                                 Output as JSON
 
@@ -266,9 +278,12 @@ Generator defaults can live in `ruah.conv.json`, `.ruah-conv.json`, or `ruah.con
   "target": "mcp-ts-server",
   "output": "./generated/server",
   "name": "Billing MCP Server",
-  "transport": "streamable-http"
+  "transport": "streamable-http",
+  "operationProfile": "standard"
 }
 ```
+
+If `operationProfile` is omitted, interactive OpenAPI/Swagger runs prompt for a preset. Non-interactive runs default to `standard`.
 
 ## Roadmap
 

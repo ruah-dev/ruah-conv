@@ -71,7 +71,7 @@ function buildHelp(): string {
 ${label()} — convert API specs to agent-ready tool surfaces
 
 Usage:
-  ${command} generate <spec-file> [--target mcp-tool-defs] [--output <dir>] [--name <server-name>] [--json]
+  ${command} generate <spec-file> [--target mcp-tool-defs] [--output <dir>] [--name <server-name>] [--operation-profile <read-only|standard|all>] [--json]
   ${command} inspect <spec-file> [--json]
   ${command} validate <spec-file> [--json]
   ${command} targets [--json]
@@ -87,6 +87,8 @@ Options:
   --output <dir>       Output directory (default: stdout)
   --name <value>       Override generated server/service name
   --transport <mode>   Generator transport hint (stdio, streamable-http, sse, all)
+  --operation-profile <profile>
+                       OpenAPI/Swagger operation preset (read-only, standard, all)
   --config <path>      Load generation defaults from a JSON config file
   --json               Output as JSON (for composition with other tools)
   --help, -h           Show this help

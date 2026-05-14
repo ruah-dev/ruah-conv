@@ -6,6 +6,7 @@ export function classifyRisk(method: HttpMethod): Tool["riskLevel"] {
 		case "HEAD":
 		case "OPTIONS":
 			return "safe";
+		case "PATCH":
 		case "DELETE":
 			return "destructive";
 		default:

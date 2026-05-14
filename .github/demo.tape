@@ -2,9 +2,9 @@ Output .github/demo.gif
 
 Set Shell "bash"
 Set FontSize 14
-Set Width 1000
-Set Height 650
-Set Theme "Catppuccin Mocha"
+Set Width 800
+Set Height 500
+Set Theme {"name":"ruah","background":"#222221","foreground":"#f0eee9","cursor":"#00d2b9","black":"#111110","red":"#f07068","green":"#00d2b9","yellow":"#e5a84b","blue":"#7aa2f7","magenta":"#bb9af7","cyan":"#00bea8","white":"#f0eee9","brightBlack":"#565248","brightRed":"#f07068","brightGreen":"#00d2b9","brightYellow":"#e5a84b","brightBlue":"#7aa2f7","brightMagenta":"#bb9af7","brightCyan":"#00bea8","brightWhite":"#faf9f7","selectionBackground":"#2a2a28"}
 Set Padding 20
 
 Hide

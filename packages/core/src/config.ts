@@ -7,6 +7,7 @@ export interface ConvConfig {
 	json?: boolean;
 	name?: string;
 	transport?: "stdio" | "streamable-http" | "sse" | "all";
+	operationProfile?: "read-only" | "standard" | "all";
 }
 
 const DEFAULT_CONFIG_FILES = [

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { loadConfig } from "../src/config.js";
 import { generate, getTargets } from "../src/generators/index.js";
+import type { RuahToolSchema, Tool } from "../src/ir/schema.js";
 import { parse } from "../src/parsers/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -147,12 +148,59 @@ describe("generate mcp-tool-defs", () => {
 		assert.equal(result.summary.typeCount, 3);
 		assert.equal(result.summary.targetId, "mcp-tool-defs");
 	});
+
+	it("applies the read-only operation profile", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("mcp-tool-defs", ir, {
+			operationProfile: "read-only",
+		});
+		const tools = JSON.parse(result.files[0].content) as Array<
+			Record<string, unknown>
+		>;
+
+		assert.deepEqual(
+			tools.map((tool) => tool.name),
+			["listPets", "getPet"],
+		);
+		assert.equal(result.summary.toolCount, 2);
+	});
+
+	it("applies the standard operation profile", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("mcp-tool-defs", ir, {
+			operationProfile: "standard",
+		});
+		const tools = JSON.parse(result.files[0].content) as Array<
+			Record<string, unknown>
+		>;
+
+		assert.deepEqual(
+			tools.map((tool) => tool.name),
+			["listPets", "createPet", "getPet"],
+		);
+		assert.equal(result.summary.toolCount, 3);
+	});
 });
 
 describe("generate errors", () => {
 	it("throws for unknown target", () => {
 		const ir = parse(PETSTORE);
 		assert.throws(() => generate("nonexistent", ir), /Unknown target/);
+	});
+
+	it("throws when the selected operation profile excludes every operation", () => {
+		const ir = buildSpec([
+			makeTool("deletePet", "DELETE"),
+			makeTool("updatePet", "PATCH"),
+		]);
+
+		assert.throws(
+			() =>
+				generate("mcp-tool-defs", ir, {
+					operationProfile: "standard",
+				}),
+			/No operations matched the "standard" operation profile/,
+		);
 	});
 });
 
@@ -215,6 +263,55 @@ describe("generate new roadmap targets", () => {
 				`expected ${file.path} to transpile without syntax diagnostics`,
 			);
 		}
+
+		// Regression: generated.ts must typecheck under strict mode (the SDK
+		// is strict, and `as const` over OPERATIONS previously narrowed param
+		// types so badly that `param.in === "header"` was flagged as
+		// unreachable). Assert the shape the fix produces:
+		const generatedTs = result.files.find(
+			(file) => file.path === "src/generated.ts",
+		);
+		assert.ok(generatedTs);
+		assert.match(
+			generatedTs.content,
+			/export type Operation = \{/,
+			"OPERATIONS must be typed via an explicit Operation interface — `as const` over-narrows parameter `in` and `requestBody` under strict typecheck",
+		);
+		assert.match(
+			generatedTs.content,
+			/OPERATIONS: Record<string, Operation>/,
+			"OPERATIONS must be widened via Record<string, Operation>, not `as const`",
+		);
+		assert.doesNotMatch(
+			generatedTs.content,
+			/OPERATIONS = \{[\s\S]*\} as const;/,
+			"OPERATIONS must NOT use `as const` (over-narrows under strict typecheck)",
+		);
+		assert.match(
+			generatedTs.content,
+			/Promise<CallToolResult>/,
+			"invokeOperation must return Promise<CallToolResult> to satisfy the SDK callback signature",
+		);
+		assert.match(
+			generatedTs.content,
+			/type: "text" as const/,
+			'content blocks must use `type: "text" as const` to avoid widening to `string`',
+		);
+	});
+
+	it("respects the standard profile in the TypeScript MCP server scaffold", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("mcp-ts-server", ir, {
+			name: "Petstore Server",
+			operationProfile: "standard",
+		});
+		const generatedFile = result.files.find(
+			(file) => file.path === "src/generated.ts",
+		);
+		assert.ok(generatedFile);
+		assert.match(generatedFile.content, /createPet/);
+		assert.doesNotMatch(generatedFile.content, /deletePet/);
+		assert.equal(result.summary.toolCount, 3);
 	});
 
 	it("generates a Python MCP server scaffold", () => {
@@ -315,6 +412,21 @@ describe("generate new roadmap targets", () => {
 		}
 	});
 
+	it("respects the standard profile in plugin output", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("codex-plugin-ts", ir, {
+			name: "Petstore Plugin",
+			operationProfile: "standard",
+		});
+
+		const manifestFile = result.files.find(
+			(file) => file.path === ".codex-plugin/plugin.json",
+		);
+		assert.ok(manifestFile);
+		assert.match(manifestFile.content, /3 API tools/);
+		assert.equal(result.summary.toolCount, 3);
+	});
+
 	it("generates a Codex plugin scaffold", () => {
 		const ir = parse(PETSTORE);
 		const result = generate("codex-plugin-ts", ir, {
@@ -379,6 +491,7 @@ describe("config loading", () => {
 				target: "openai-tools",
 				output: "./generated",
 				name: "Configured Server",
+				operationProfile: "read-only",
 			}),
 		);
 
@@ -386,7 +499,36 @@ describe("config loading", () => {
 		assert.equal(config.target, "openai-tools");
 		assert.equal(config.output, "./generated");
 		assert.equal(config.name, "Configured Server");
+		assert.equal(config.operationProfile, "read-only");
 	});
+});
+
+describe("generate CLI writes nested output paths", () => {
+	const CLI = resolve(PROJECT_ROOT, "dist", "cli.js");
+
+	for (const target of [
+		"mcp-ts-server",
+		"a2a-wrapper",
+		"claude-code-plugin-ts",
+		"codex-plugin-ts",
+	]) {
+		it(`creates parent directories when generating ${target}`, () => {
+			const outDir = mkdtempSync(resolve(tmpdir(), `ruah-conv-cli-${target}-`));
+			const spec = target === "a2a-wrapper" ? GRAPHQL : PETSTORE;
+
+			const cli = spawnSync(
+				process.execPath,
+				[CLI, "generate", spec, "--target", target, "--output", outDir],
+				{ encoding: "utf8" },
+			);
+
+			assert.equal(
+				cli.status,
+				0,
+				`CLI failed for ${target}:\nstdout:\n${cli.stdout}\nstderr:\n${cli.stderr}`,
+			);
+		});
+	}
 });
 
 function writeGeneratedFiles(
@@ -399,4 +541,39 @@ function writeGeneratedFiles(
 		writeFileSync(target, file.content, "utf8");
 	}
 	return dir;
+}
+
+function buildSpec(tools: Tool[]): RuahToolSchema {
+	return {
+		meta: {
+			title: "Test API",
+			version: "1.0.0",
+			sourceFormat: "openapi-3.0",
+			sourceFile: "test.yaml",
+			generatedAt: new Date().toISOString(),
+			baseUrl: "https://example.com",
+		},
+		auth: [],
+		tools,
+		types: {},
+	};
+}
+
+function makeTool(name: string, method: Tool["method"]): Tool {
+	return {
+		name,
+		description: `${method} ${name}`,
+		method,
+		path: `/${name}`,
+		parameters: [],
+		responses: [],
+		idempotent: method !== "POST" && method !== "PATCH",
+		readOnly: method === "GET" || method === "HEAD" || method === "OPTIONS",
+		riskLevel:
+			method === "GET" || method === "HEAD" || method === "OPTIONS"
+				? "safe"
+				: method === "PATCH" || method === "DELETE"
+					? "destructive"
+					: "moderate",
+	};
 }
