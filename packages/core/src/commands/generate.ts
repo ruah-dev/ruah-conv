@@ -8,7 +8,7 @@ import {
 	countExcludedToolsByOperationProfile,
 	parseOperationProfile,
 } from "../generators/operation-profile.js";
-import { validateIR } from "../ir/validate.js";
+import { summarizeWarnings, validateIR } from "../ir/validate.js";
 import { parse } from "../parsers/index.js";
 import { applyPaginationOverrides } from "../parsers/shared.js";
 import { logError, logInfo, logSuccess, logWarn } from "../utils/format.js";
@@ -135,7 +135,9 @@ export async function run(args: ParsedArgs): Promise<void> {
 
 	// Validate and warn
 	const warnings = validateIR(filteredIr);
-	if (!jsonMode) {
+	const verbose =
+		args.flags.verbose === true || args.named.verbose !== undefined;
+	if (!jsonMode && verbose) {
 		for (const w of warnings) {
 			logWarn(`${w.path}: ${w.message}`);
 		}
@@ -194,9 +196,12 @@ export async function run(args: ParsedArgs): Promise<void> {
 			logInfo(`Operation profile: ${operationProfile}${excluded}`);
 		}
 		if (warnings.length > 0) {
-			logWarn(
-				`${warnings.length} warning(s) — run 'ruah conv validate' for details`,
-			);
+			logWarn(summarizeWarnings(warnings));
+			if (!verbose) {
+				console.log(
+					`  Run with --verbose, or 'ruah conv validate' for full details.`,
+				);
+			}
 		}
 	}
 }

@@ -5,6 +5,36 @@ import type {
 	WarningCode,
 } from "./schema.js";
 
+const TOP_CODE_LIMIT = 5;
+
+/**
+ * Build a single-line summary of validation warnings grouped by code.
+ *
+ * Example output (counts in descending order, up to 5 codes):
+ *   "421 warnings: 380 missing-param-description, 32 missing-response-schema, 9 unresolved-ref"
+ *
+ * Returns an empty string when there are no warnings.
+ */
+export function summarizeWarnings(warnings: ValidationWarning[]): string {
+	if (warnings.length === 0) return "";
+	const counts = new Map<string, number>();
+	for (const w of warnings) {
+		counts.set(w.code, (counts.get(w.code) ?? 0) + 1);
+	}
+	const ranked = [...counts.entries()].sort((a, b) => {
+		if (b[1] !== a[1]) return b[1] - a[1];
+		return a[0].localeCompare(b[0]);
+	});
+	const top = ranked.slice(0, TOP_CODE_LIMIT);
+	const head = `${warnings.length} warning${warnings.length === 1 ? "" : "s"}`;
+	const body = top.map(([code, count]) => `${count} ${code}`).join(", ");
+	const extra =
+		ranked.length > TOP_CODE_LIMIT
+			? ` (+${ranked.length - TOP_CODE_LIMIT} more codes)`
+			: "";
+	return `${head}: ${body}${extra}`;
+}
+
 const MAX_TOOL_NAME_LENGTH = 64;
 
 export function validateIR(spec: RuahToolSchema): ValidationWarning[] {

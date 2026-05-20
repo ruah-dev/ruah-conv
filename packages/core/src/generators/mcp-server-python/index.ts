@@ -9,6 +9,8 @@ import {
 	buildToolInputSchema,
 	renderAuthEnvVarBanner,
 	renderAuthWiringPython,
+	renderDefaultAuthSchemesPython,
+	renderEnvExample,
 	toSafePythonIdent,
 } from "../shared.js";
 
@@ -35,6 +37,7 @@ export function generate(
 		return {
 			...operation,
 			flattenedBody,
+			auth: tool.auth ?? [],
 		};
 	});
 	const tools = buildToolDefinitions(spec);
@@ -46,6 +49,11 @@ export function generate(
 				path: "pyproject.toml",
 				language: "yaml",
 				content: buildPyproject(serverName),
+			},
+			{
+				path: ".env.example",
+				language: "yaml",
+				content: renderEnvExample(authPlan, spec.meta.title),
 			},
 			{
 				path: "server.py",
@@ -132,6 +140,7 @@ async def ${safeFnName}(${args}) -> str:
 
 	const authBanner = renderAuthEnvVarBanner(authPlan, "#");
 	const authBody = renderAuthWiringPython(authPlan);
+	const defaultAuthSchemes = renderDefaultAuthSchemesPython(authPlan);
 
 	return `${authBanner}from __future__ import annotations
 
@@ -149,8 +158,22 @@ mcp = FastMCP(${JSON.stringify(serverName)}, stateless_http=True, json_response=
 API_BASE_URL = os.environ.get("API_BASE_URL", ${JSON.stringify(baseUrl ?? "http://localhost:3000")})
 OPERATIONS = ${toPythonLiteral(Object.fromEntries(operations.map((operation) => [operation.name, operation])))}
 
+# Every auth scheme id declared in the spec. Used as a fallback when an
+# operation declares no security requirement of its own.
+DEFAULT_AUTH_SCHEMES: list[str] = ${defaultAuthSchemes}
 
-def apply_auth(headers: dict[str, str], params: dict[str, Any]) -> None:
+
+def _should_apply(scheme_id: str, operation_auth: list[str]) -> bool:
+    if not operation_auth:
+        return scheme_id in DEFAULT_AUTH_SCHEMES
+    return scheme_id in operation_auth
+
+
+def apply_auth(
+    headers: dict[str, str],
+    params: dict[str, Any],
+    operation_auth: list[str],
+) -> None:
 ${authBody}
 
 _JSON_CT_RE = re.compile(r"^application/([^;]*\\+)?json(;|$)")
@@ -233,7 +256,7 @@ async def invoke_operation(operation: dict[str, Any], args: dict[str, Any]) -> s
         elif param["in"] == "header":
             headers[param["name"]] = str(value)
 
-    apply_auth(headers, params)
+    apply_auth(headers, params, operation.get("auth", []))
 
     json_body: Any = None
     content_body: Any = None

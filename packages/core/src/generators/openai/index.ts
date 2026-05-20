@@ -13,6 +13,10 @@ export const capability: GeneratorCapability = {
 const generator = defineSimpleGenerator({
 	capability,
 	filename: "openai-tools.json",
+	// OpenAI tool definitions don't have a standard `_meta` slot. We mirror
+	// the structured metadata under `function._meta.ruah` so callers that
+	// inspect the JSON (e.g. policy engines) can still read risk/method/path
+	// without parsing the description.
 	transform: (spec) =>
 		buildToolDefinitions(spec).map((tool) => ({
 			type: "function",
@@ -20,6 +24,7 @@ const generator = defineSimpleGenerator({
 				name: tool.name,
 				description: tool.description,
 				parameters: tool.inputSchema,
+				_meta: tool._meta,
 			},
 		})),
 });

@@ -9,6 +9,8 @@ import {
 	buildToolInputSchema,
 	renderAuthEnvVarBanner,
 	renderAuthWiringTs,
+	renderDefaultAuthSchemesTs,
+	renderEnvExample,
 } from "../shared.js";
 
 export const capability: GeneratorCapability = {
@@ -59,6 +61,11 @@ export function generate(
 				),
 			},
 			{
+				path: ".env.example",
+				language: "yaml",
+				content: renderEnvExample(authPlan, spec.meta.title),
+			},
+			{
 				path: "src/index.js",
 				language: "typescript",
 				content: buildA2ASource(
@@ -92,6 +99,7 @@ function buildA2ASource(
 ): string {
 	const authBanner = renderAuthEnvVarBanner(authPlan, "//");
 	const authBody = renderAuthWiringTs(authPlan);
+	const defaultAuthSchemes = renderDefaultAuthSchemesTs(authPlan);
 
 	return `${authBanner}import { createServer } from "node:http";
 
@@ -162,7 +170,7 @@ async function invokeOperation(operation, args) {
     if (param.in === "header") headers[param.name] = String(value);
   }
 
-  applyAuth(headers, url);
+  applyAuth(headers, url, operation.auth ?? []);
 
   let body;
   if (operation.requestBody) {
@@ -248,10 +256,22 @@ function interpolatePath(pathname, args) {
   });
 }
 
-function applyAuth(headers, url) {
+// Every auth scheme id declared in the spec. Used as a fallback when an
+// operation declares no security requirement of its own.
+const DEFAULT_AUTH_SCHEMES = ${defaultAuthSchemes};
+
+function _shouldApply(schemeId, operationAuth) {
+  if (!operationAuth || operationAuth.length === 0) {
+    return DEFAULT_AUTH_SCHEMES.includes(schemeId);
+  }
+  return operationAuth.includes(schemeId);
+}
+
+function applyAuth(headers, url, operationAuth) {
   // The \`url\` parameter is used when an auth scheme injects into the query
   // string (e.g. apiKey in: query). Silence unused-var warnings otherwise.
   void url;
+  void operationAuth;
 ${authBody}}
 `;
 }

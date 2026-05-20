@@ -8,7 +8,12 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { loadConfig } from "../src/config.js";
 import { generate, getTargets } from "../src/generators/index.js";
-import type { RuahToolSchema, Tool } from "../src/ir/schema.js";
+import type {
+	RuahToolSchema,
+	Tool,
+	ValidationWarning,
+} from "../src/ir/schema.js";
+import { summarizeWarnings } from "../src/ir/validate.js";
 import { parse } from "../src/parsers/index.js";
 import { writeGeneratedFiles as writeGeneratedFilesGuarded } from "../src/utils/write-files.js";
 
@@ -740,7 +745,10 @@ describe("runtime auth wiring", () => {
 		assert.match(generated.content, /X-API-Key/);
 		// applyAuth is called with both headers and url so query-param schemes
 		// work too.
-		assert.match(generated.content, /applyAuth\(headers, url\)/);
+		assert.match(
+			generated.content,
+			/applyAuth\(headers, url, operation\.auth\)/,
+		);
 	});
 
 	it("mcp-ts-server omits auth wiring when authWiring is false", () => {
@@ -789,7 +797,10 @@ describe("runtime auth wiring", () => {
 		assert.ok(src);
 		assert.match(src.content, /API_KEY/);
 		assert.match(src.content, /X-API-Key/);
-		assert.match(src.content, /applyAuth\(headers, url\)/);
+		assert.match(
+			src.content,
+			/applyAuth\(headers, url, operation\.auth \?\? \[\]\)/,
+		);
 	});
 
 	it("a2a wrapper omits auth wiring when authWiring is false", () => {
@@ -1399,5 +1410,257 @@ describe("writeGeneratedFiles path traversal guard", () => {
 		);
 		assert.equal(written.length, 1);
 		assert.ok(written[0].startsWith(resolve(dir)));
+	});
+});
+
+describe("v0.6.0 features", () => {
+	function makeBasicBearerSpec(
+		operationAuth: string[] | undefined,
+	): RuahToolSchema {
+		const tool = makeTool("listThings", "GET");
+		return {
+			meta: {
+				title: "Multi-Auth API",
+				version: "1.0.0",
+				sourceFormat: "openapi-3.0",
+				sourceFile: "inline.yaml",
+				generatedAt: new Date().toISOString(),
+				baseUrl: "https://example.com",
+			},
+			auth: [
+				{ id: "basicAuth", type: "http", scheme: "basic" },
+				{ id: "bearerAuth", type: "http", scheme: "bearer" },
+			],
+			types: {},
+			tools: [{ ...tool, auth: operationAuth }],
+		};
+	}
+
+	// ── Bug 3: per-tool auth from IR ──────────────────────────────────
+
+	it("Bug 3: generated TS applyAuth takes operationAuth and is called with operation.auth", () => {
+		const spec = makeBasicBearerSpec(["bearerAuth"]);
+		const result = generate("mcp-ts-server", spec);
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		assert.match(
+			generated.content,
+			/function applyAuth\([\s\S]*?operationAuth: ReadonlyArray<string>/,
+			"applyAuth signature must declare operationAuth",
+		);
+		assert.match(
+			generated.content,
+			/applyAuth\(headers, url, operation\.auth\)/,
+			"call site must pass operation.auth",
+		);
+		assert.match(
+			generated.content,
+			/_shouldApply\("bearerAuth", operationAuth\)/,
+			"generated body must gate the bearer block on operationAuth",
+		);
+	});
+
+	it("Bug 3: only the operation's declared scheme is applied (no double Authorization stamp)", () => {
+		const spec = makeBasicBearerSpec(["bearerAuth"]);
+		const result = generate("mcp-ts-server", spec);
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		// Both scheme blocks exist, both target the Authorization header, both
+		// guarded by _authSet so the first applicable scheme wins.
+		const authSetGuards = generated.content.match(/if \(!_authSet\)/g) ?? [];
+		assert.ok(
+			authSetGuards.length >= 2,
+			`expected at least 2 _authSet guards, got ${authSetGuards.length}`,
+		);
+		assert.match(
+			generated.content,
+			/_authSet = true/,
+			"generated body must mark _authSet after applying a scheme",
+		);
+	});
+
+	it("Bug 3: DEFAULT_AUTH_SCHEMES constant lists every plan entry", () => {
+		const spec = makeBasicBearerSpec(undefined);
+		const result = generate("mcp-ts-server", spec);
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		assert.match(
+			generated.content,
+			/const DEFAULT_AUTH_SCHEMES: ReadonlyArray<string> = \["basicAuth", "bearerAuth"\]/,
+		);
+	});
+
+	it("Bug 3: Python apply_auth takes operation_auth and is called with it", () => {
+		const spec = makeBasicBearerSpec(["bearerAuth"]);
+		const result = generate("mcp-python-server", spec);
+		const py = result.files.find((f) => f.path === "server.py");
+		assert.ok(py);
+		assert.match(
+			py.content,
+			/def apply_auth\([\s\S]*?operation_auth: list\[str\]/,
+			"apply_auth signature must declare operation_auth",
+		);
+		assert.match(
+			py.content,
+			/apply_auth\(headers, params, operation\.get\("auth", \[\]\)\)/,
+		);
+		assert.match(
+			py.content,
+			/DEFAULT_AUTH_SCHEMES: list\[str\] = \["basicAuth", "bearerAuth"\]/,
+		);
+		assert.match(py.content, /_should_apply\("bearerAuth", operation_auth\)/);
+	});
+
+	it("Bug 3: a2a wrapper threads operationAuth through applyAuth", () => {
+		const spec = makeBasicBearerSpec(["bearerAuth"]);
+		const result = generate("a2a-wrapper", spec);
+		const src = result.files.find((f) => f.path === "src/index.js");
+		assert.ok(src);
+		assert.match(
+			src.content,
+			/applyAuth\(headers, url, operation\.auth \?\? \[\]\)/,
+		);
+		assert.match(
+			src.content,
+			/const DEFAULT_AUTH_SCHEMES = \["basicAuth", "bearerAuth"\]/,
+		);
+	});
+
+	it("Bug 3: scaffold targets emit a .env.example", () => {
+		const spec = makeBasicBearerSpec(["bearerAuth"]);
+		for (const target of [
+			"mcp-ts-server",
+			"mcp-python-server",
+			"a2a-wrapper",
+		]) {
+			const result = generate(target, spec);
+			const env = result.files.find((f) => f.path === ".env.example");
+			assert.ok(env, `${target} must emit .env.example`);
+			assert.match(env.content, /basicAuth/);
+			assert.match(env.content, /bearerAuth/);
+			assert.match(env.content, /BEARER_TOKEN=/);
+			assert.match(env.content, /BASIC_AUTH_USER=/);
+			assert.match(env.content, /BASIC_AUTH_PASS=/);
+		}
+	});
+
+	// ── Bug 4: structured _meta + cleaner descriptions ────────────────
+
+	it("Bug 4: mcp-tool-defs emits _meta.ruah with risk/method/path on every tool", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("mcp-tool-defs", ir);
+		const toolsFile = result.files.find((f) => f.path === "tools.json");
+		assert.ok(toolsFile);
+		const tools = JSON.parse(toolsFile.content) as Array<
+			Record<string, unknown>
+		>;
+		for (const tool of tools) {
+			const meta = tool._meta as { ruah: Record<string, unknown> } | undefined;
+			assert.ok(meta, `tool ${tool.name as string} must have _meta`);
+			assert.ok(meta.ruah, "_meta must contain ruah block");
+			assert.ok("risk" in meta.ruah, "_meta.ruah must contain risk");
+			assert.ok("method" in meta.ruah, "_meta.ruah must contain method");
+			assert.ok("path" in meta.ruah, "_meta.ruah must contain path");
+		}
+	});
+
+	it("Bug 4: openai and anthropic targets carry _meta through", () => {
+		const ir = parse(PETSTORE);
+		const openaiResult = generate("openai-tools", ir);
+		const openaiTools = JSON.parse(openaiResult.files[0].content) as Array<
+			Record<string, unknown>
+		>;
+		for (const entry of openaiTools) {
+			const fn = entry.function as Record<string, unknown>;
+			assert.ok(fn._meta, "openai function entry must include _meta");
+		}
+		const anthropicResult = generate("anthropic-tools", ir);
+		const anthropicTools = JSON.parse(
+			anthropicResult.files[0].content,
+		) as Array<Record<string, unknown>>;
+		for (const entry of anthropicTools) {
+			assert.ok(entry._meta, "anthropic tool entry must include _meta");
+		}
+	});
+
+	it("Bug 4: description for risky tools uses paragraph break, not '<orig> Risk:'", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("mcp-tool-defs", ir);
+		const tools = JSON.parse(result.files[0].content) as Array<
+			Record<string, unknown>
+		>;
+		const destructive = tools.find(
+			(t) =>
+				(t._meta as { ruah: { risk: string } }).ruah.risk === "destructive",
+		);
+		assert.ok(
+			destructive,
+			"petstore should have at least one destructive tool",
+		);
+		const desc = destructive.description as string;
+		// The old format produced strings like "Deletes a pet Risk: destructive."
+		// The new format separates with "\n\n".
+		assert.doesNotMatch(
+			desc,
+			/[A-Za-z] Risk:/,
+			"description must not end a sentence with ' Risk:' (missing separator)",
+		);
+		if (desc.includes("Risk:")) {
+			assert.match(desc, /\n\nRisk:/, "Risk hint must be its own paragraph");
+		}
+	});
+
+	// ── Bug 6: warning summary ────────────────────────────────────────
+
+	it("Bug 6: summarizeWarnings groups by code, descending count, top 5", () => {
+		const warnings: ValidationWarning[] = [];
+		const make = (code: ValidationWarning["code"], count: number) => {
+			for (let i = 0; i < count; i++) {
+				warnings.push({ path: `p${i}`, code, message: "x" });
+			}
+		};
+		make("missing-param-description", 60);
+		make("unresolved-ref", 20);
+		make("missing-description", 10);
+		make("unknown-type", 5);
+		make("long-tool-name", 3);
+		make("duplicate-tool-name", 2);
+		// 6 distinct codes, 100 total warnings
+		const summary = summarizeWarnings(warnings);
+		assert.equal(summary.startsWith("100 warnings:"), true);
+		// Top 5 codes appear in descending order
+		const idx = (s: string) => summary.indexOf(s);
+		assert.ok(idx("60 missing-param-description") > -1);
+		assert.ok(idx("20 unresolved-ref") > -1);
+		assert.ok(idx("10 missing-description") > -1);
+		assert.ok(idx("5 unknown-type") > -1);
+		assert.ok(idx("3 long-tool-name") > -1);
+		// 6th code (smallest) should be elided
+		assert.equal(
+			summary.includes("duplicate-tool-name"),
+			false,
+			"smallest code must be omitted when codes > 5",
+		);
+		assert.match(summary, /\(\+1 more codes\)/);
+		// Descending order
+		assert.ok(idx("60 missing-param-description") < idx("20 unresolved-ref"));
+		assert.ok(idx("20 unresolved-ref") < idx("10 missing-description"));
+	});
+
+	it("Bug 6: summarizeWarnings returns empty string for no warnings", () => {
+		assert.equal(summarizeWarnings([]), "");
+	});
+
+	it("Bug 6: summarizeWarnings fits on one line (no embedded newline)", () => {
+		const warnings: ValidationWarning[] = [];
+		for (let i = 0; i < 50; i++) {
+			warnings.push({
+				path: `p${i}`,
+				code: "missing-param-description",
+				message: "x",
+			});
+		}
+		const summary = summarizeWarnings(warnings);
+		assert.equal(summary.includes("\n"), false);
 	});
 });

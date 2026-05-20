@@ -9,6 +9,9 @@ import {
 	buildToolInputSchema,
 	renderAuthEnvVarBanner,
 	renderAuthWiringTs,
+	renderDefaultAuthSchemesTs,
+	renderEnvExample,
+	type ToolDefinition,
 } from "../shared.js";
 
 export const capability: GeneratorCapability = {
@@ -73,6 +76,11 @@ export function generate(
 				),
 			},
 			{
+				path: ".env.example",
+				language: "yaml",
+				content: renderEnvExample(authPlan, spec.meta.title),
+			},
+			{
 				path: "tsconfig.json",
 				language: "json",
 				content: JSON.stringify(
@@ -128,11 +136,7 @@ export function generate(
 function buildSharedServerSource(
 	serverName: string,
 	baseUrl: string | undefined,
-	toolDefs: Array<{
-		name: string;
-		description: string;
-		inputSchema: Record<string, unknown>;
-	}>,
+	toolDefs: ToolDefinition[],
 	operations: Array<Record<string, unknown>>,
 	authPlan: AuthWiringPlan,
 ): string {
@@ -140,12 +144,17 @@ function buildSharedServerSource(
 		.map((tool) => {
 			const props =
 				(tool.inputSchema.properties as Record<string, unknown>) ?? {};
+			// The MCP TS SDK's registerTool config accepts a structured `_meta`
+			// passthrough. We cast the config object to bypass version-skewed
+			// type checks across SDK minor versions while still emitting the
+			// metadata that downstream MCP clients can read off `tool._meta`.
 			return `  server.registerTool(
     ${JSON.stringify(tool.name)},
-    {
+    ({
       description: ${JSON.stringify(tool.description)},
-      inputSchema: ${buildZodShape(props, (tool.inputSchema.required as string[]) ?? [])}
-    },
+      inputSchema: ${buildZodShape(props, (tool.inputSchema.required as string[]) ?? [])},
+      _meta: ${JSON.stringify(tool._meta)}
+    } as any),
     async (args) => invokeOperation(OPERATIONS[${JSON.stringify(tool.name)}] as Operation, args)
   );`;
 		})
@@ -153,6 +162,7 @@ function buildSharedServerSource(
 
 	const authBanner = renderAuthEnvVarBanner(authPlan, "//");
 	const authBody = renderAuthWiringTs(authPlan);
+	const defaultAuthSchemes = renderDefaultAuthSchemesTs(authPlan);
 
 	return `${authBanner}import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -209,7 +219,7 @@ async function invokeOperation(
     }
   }
 
-  applyAuth(headers, url);
+  applyAuth(headers, url, operation.auth);
 
   let body: BodyInit | undefined;
   if (operation.requestBody) {
@@ -341,11 +351,30 @@ function interpolatePath(pathname: string, args: Record<string, unknown>) {
   });
 }
 
-function applyAuth(headers: Record<string, string>, url: URL) {
+// Every auth scheme id declared in the spec. Used as a fallback when an
+// operation declares no security requirement of its own.
+const DEFAULT_AUTH_SCHEMES: ReadonlyArray<string> = ${defaultAuthSchemes};
+
+function _shouldApply(
+  schemeId: string,
+  operationAuth: ReadonlyArray<string>,
+): boolean {
+  if (operationAuth.length === 0) {
+    return DEFAULT_AUTH_SCHEMES.includes(schemeId);
+  }
+  return operationAuth.includes(schemeId);
+}
+
+function applyAuth(
+  headers: Record<string, string>,
+  url: URL,
+  operationAuth: ReadonlyArray<string>,
+) {
   // The \`url\` parameter is used when an auth scheme injects into the query
   // string (e.g. apiKey in: query). Suppress unused-var noise when only
   // header-based schemes are present.
   void url;
+  void operationAuth;
 ${authBody}}
 `;
 }

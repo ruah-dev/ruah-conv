@@ -52,16 +52,40 @@ export function buildToolInputSchema(
 	return { schema, flattenedBody };
 }
 
-export function buildToolDefinitions(spec: RuahToolSchema): Array<{
+export interface ToolDefinitionMeta {
+	risk: Tool["riskLevel"];
+	method: Tool["method"];
+	path: string;
+	pagination?: Tool["pagination"];
+	auth?: string[];
+	deprecated?: true;
+}
+
+export interface ToolDefinition {
 	name: string;
 	description: string;
 	inputSchema: Record<string, unknown>;
-}> {
-	return spec.tools.map((tool) => ({
-		name: tool.name,
-		description: enrichToolDescription(tool),
-		inputSchema: buildToolInputSchema(tool, spec).schema,
-	}));
+	_meta: { ruah: ToolDefinitionMeta };
+}
+
+export function buildToolDefinitions(spec: RuahToolSchema): ToolDefinition[] {
+	return spec.tools.map((tool) => {
+		const meta: ToolDefinitionMeta = {
+			risk: tool.riskLevel,
+			method: tool.method,
+			path: tool.path,
+		};
+		if (tool.pagination) meta.pagination = tool.pagination;
+		if (tool.auth && tool.auth.length > 0) meta.auth = [...tool.auth];
+		if (tool.deprecated) meta.deprecated = true;
+
+		return {
+			name: tool.name,
+			description: enrichToolDescription(tool),
+			inputSchema: buildToolInputSchema(tool, spec).schema,
+			_meta: { ruah: meta },
+		};
+	});
 }
 
 export function buildOperationSpecs(spec: RuahToolSchema) {
@@ -80,16 +104,22 @@ export function buildOperationSpecs(spec: RuahToolSchema) {
 }
 
 export function enrichToolDescription(tool: Tool): string {
-	const parts = [tool.description];
+	const base = (tool.description ?? "").trim();
+	const parts: string[] = [];
+	if (base) parts.push(base);
 	if (tool.pagination) {
 		parts.push(
 			`Pagination: ${tool.pagination.style} via ${tool.pagination.params.join(", ")}.`,
 		);
 	}
 	if (tool.riskLevel !== "safe") {
-		parts.push(`Risk: ${tool.riskLevel}.`);
+		const hint =
+			tool.riskLevel === "destructive"
+				? "Risk: destructive — this operation modifies or removes state."
+				: "Risk: moderate — this operation may modify state.";
+		parts.push(hint);
 	}
-	return parts.join(" ");
+	return parts.join("\n\n");
 }
 
 function appendRequestBodySchema(
@@ -432,8 +462,16 @@ export function toSafePythonIdent(name: string, fallback: string): string {
 }
 
 /**
- * Render the body of the TypeScript `applyAuth(headers, url)` function.
+ * Render the body of the TypeScript `applyAuth(headers, url, operationAuth)` function.
  * Always returns a valid function body — if no entries, it's a no-op.
+ *
+ * Semantics:
+ *   - Each entry is only applied when its scheme.id appears in `operationAuth`,
+ *     OR when `operationAuth` is empty and the entry's id is in the
+ *     DEFAULT_AUTH_SCHEMES fallback (also generated, includes every scheme id
+ *     declared in the plan).
+ *   - First applicable scheme that targets the "Authorization" header wins;
+ *     subsequent Authorization-setting blocks are skipped this call.
  */
 export function renderAuthWiringTs(plan: AuthWiringPlan): string {
 	if (!plan.enabled || plan.entries.length === 0) {
@@ -442,65 +480,137 @@ export function renderAuthWiringTs(plan: AuthWiringPlan): string {
 
 	const blocks: string[] = [];
 	for (const entry of plan.entries) {
+		const idLit = JSON.stringify(entry.scheme.id);
+		const gateOpen = `  if (_shouldApply(${idLit}, operationAuth)) {`;
+		const gateClose = `  }`;
 		if (entry.scheme.type === "http" && entry.passwordEnvVar) {
 			// Basic auth — two env vars
-			blocks.push(`  {
-    const user = process.env[${JSON.stringify(entry.envVar)}];
-    const pass = process.env[${JSON.stringify(entry.passwordEnvVar)}];
-    if (user !== undefined && pass !== undefined) {
-      const encoded = Buffer.from(user + ":" + pass).toString("base64");
-      headers[${JSON.stringify(entry.name)}] = "Basic " + encoded;
-    } else if (user !== undefined || pass !== undefined) {
-      console.warn(${JSON.stringify(`[auth] Partial basic-auth config: set both ${entry.envVar} and ${entry.passwordEnvVar}.`)});
+			blocks.push(`${gateOpen}
+    if (!_authSet) {
+      const user = process.env[${JSON.stringify(entry.envVar)}];
+      const pass = process.env[${JSON.stringify(entry.passwordEnvVar)}];
+      if (user !== undefined && pass !== undefined) {
+        const encoded = Buffer.from(user + ":" + pass).toString("base64");
+        headers[${JSON.stringify(entry.name)}] = "Basic " + encoded;
+        _authSet = true;
+      } else if (user !== undefined || pass !== undefined) {
+        console.warn(${JSON.stringify(`[auth] Partial basic-auth config: set both ${entry.envVar} and ${entry.passwordEnvVar}.`)});
+      }
     }
-  }`);
+${gateClose}`);
 			continue;
 		}
 		if (
 			entry.scheme.type === "http" &&
 			entry.scheme.scheme?.toLowerCase() === "bearer"
 		) {
-			blocks.push(`  {
-    const token = process.env[${JSON.stringify(entry.envVar)}];
-    if (token) {
-      headers[${JSON.stringify(entry.name)}] = "Bearer " + token;
+			blocks.push(`${gateOpen}
+    if (!_authSet) {
+      const token = process.env[${JSON.stringify(entry.envVar)}];
+      if (token) {
+        headers[${JSON.stringify(entry.name)}] = "Bearer " + token;
+        _authSet = true;
+      }
     }
-  }`);
+${gateClose}`);
 			continue;
 		}
 		if (entry.scheme.type === "oauth2") {
-			blocks.push(`  // oauth2 — token must be obtained externally; set ${entry.envVar} to a valid bearer token.
-  {
-    const token = process.env[${JSON.stringify(entry.envVar)}];
-    if (token) {
-      headers[${JSON.stringify(entry.name)}] = "Bearer " + token;
+			blocks.push(`${gateOpen}
+    // oauth2 — token must be obtained externally; set ${entry.envVar} to a valid bearer token.
+    if (!_authSet) {
+      const token = process.env[${JSON.stringify(entry.envVar)}];
+      if (token) {
+        headers[${JSON.stringify(entry.name)}] = "Bearer " + token;
+        _authSet = true;
+      }
     }
-  }`);
+${gateClose}`);
 			continue;
 		}
 		// apiKey
 		if (entry.in === "query") {
-			blocks.push(`  {
+			blocks.push(`${gateOpen}
     const key = process.env[${JSON.stringify(entry.envVar)}];
     if (key) {
       url.searchParams.set(${JSON.stringify(entry.name)}, key);
     }
-  }`);
+${gateClose}`);
 		} else {
-			blocks.push(`  {
+			// header apiKey — not Authorization (usually X-API-Key etc.) — no first-wins guard.
+			blocks.push(`${gateOpen}
     const key = process.env[${JSON.stringify(entry.envVar)}];
     if (key) {
       headers[${JSON.stringify(entry.name)}] = key;
     }
-  }`);
+${gateClose}`);
 		}
 	}
 
-	return `${blocks.join("\n")}\n`;
+	const preamble = `  let _authSet = false;\n`;
+	return `${preamble}${blocks.join("\n")}\n`;
 }
 
 /**
- * Render the body of the Python `apply_auth(headers, params)` function.
+ * Render the JS array literal listing every auth scheme id in the plan.
+ * Used as DEFAULT_AUTH_SCHEMES when an operation declares no security.
+ */
+export function renderDefaultAuthSchemesTs(plan: AuthWiringPlan): string {
+	const ids = plan.entries.map((entry) => JSON.stringify(entry.scheme.id));
+	return `[${ids.join(", ")}]`;
+}
+
+/**
+ * Render the Python list literal listing every auth scheme id in the plan.
+ */
+export function renderDefaultAuthSchemesPython(plan: AuthWiringPlan): string {
+	const ids = plan.entries.map((entry) => JSON.stringify(entry.scheme.id));
+	return `[${ids.join(", ")}]`;
+}
+
+/**
+ * Build the .env.example content for a scaffold. Lists every supported scheme
+ * with its env var(s), or a stub note for oauth2.
+ */
+export function renderEnvExample(
+	plan: AuthWiringPlan,
+	specTitle: string,
+): string {
+	const header = `# Auth env vars for the ${specTitle} scaffold.\n# Each scheme declared in the spec maps to one or more env vars.\n# Uncomment and fill in the ones your endpoints require.\n`;
+	if (!plan.enabled || plan.entries.length === 0) {
+		return `${header}\n# (no auth schemes declared)\n`;
+	}
+
+	const blocks: string[] = [];
+	for (const entry of plan.entries) {
+		const scheme = entry.scheme;
+		const id = scheme.id;
+		if (scheme.type === "apiKey") {
+			const where = entry.in === "query" ? "query" : "header";
+			blocks.push(
+				`# ${id} — apiKey in ${where} (${entry.name})\n# ${entry.envVar}=`,
+			);
+		} else if (scheme.type === "http" && entry.passwordEnvVar) {
+			blocks.push(
+				`# ${id} — http/basic\n# ${entry.envVar}=\n# ${entry.passwordEnvVar}=`,
+			);
+		} else if (
+			scheme.type === "http" &&
+			scheme.scheme?.toLowerCase() === "bearer"
+		) {
+			blocks.push(`# ${id} — http/bearer\n# ${entry.envVar}=`);
+		} else if (scheme.type === "oauth2") {
+			blocks.push(
+				`# ${id} — oauth2 (obtain a token externally and set the bearer below)\n# ${entry.envVar}=`,
+			);
+		}
+	}
+
+	return `${header}\n${blocks.join("\n\n")}\n`;
+}
+
+/**
+ * Render the body of the Python `apply_auth(headers, params, operation_auth)` function.
  */
 export function renderAuthWiringPython(plan: AuthWiringPlan): string {
 	if (!plan.enabled || plan.entries.length === 0) {
@@ -508,18 +618,24 @@ export function renderAuthWiringPython(plan: AuthWiringPlan): string {
 	}
 
 	const blocks: string[] = [];
+	blocks.push(`    _auth_set = False`);
 	for (const entry of plan.entries) {
+		const idLit = JSON.stringify(entry.scheme.id);
+		const gate = `    if _should_apply(${idLit}, operation_auth):`;
 		if (entry.scheme.type === "http" && entry.passwordEnvVar) {
 			blocks.push(
-				`    _user = os.environ.get(${JSON.stringify(entry.envVar)})
-    _pass = os.environ.get(${JSON.stringify(entry.passwordEnvVar)})
-    if _user is not None and _pass is not None:
-        import base64
-        _encoded = base64.b64encode(f"{_user}:{_pass}".encode("utf-8")).decode("ascii")
-        headers[${JSON.stringify(entry.name)}] = "Basic " + _encoded
-    elif _user is not None or _pass is not None:
-        import sys
-        print(${JSON.stringify(`[auth] Partial basic-auth config: set both ${entry.envVar} and ${entry.passwordEnvVar}.`)}, file=sys.stderr)`,
+				`${gate}
+        if not _auth_set:
+            _user = os.environ.get(${JSON.stringify(entry.envVar)})
+            _pass = os.environ.get(${JSON.stringify(entry.passwordEnvVar)})
+            if _user is not None and _pass is not None:
+                import base64
+                _encoded = base64.b64encode(f"{_user}:{_pass}".encode("utf-8")).decode("ascii")
+                headers[${JSON.stringify(entry.name)}] = "Basic " + _encoded
+                _auth_set = True
+            elif _user is not None or _pass is not None:
+                import sys
+                print(${JSON.stringify(`[auth] Partial basic-auth config: set both ${entry.envVar} and ${entry.passwordEnvVar}.`)}, file=sys.stderr)`,
 			);
 			continue;
 		}
@@ -528,33 +644,41 @@ export function renderAuthWiringPython(plan: AuthWiringPlan): string {
 			entry.scheme.scheme?.toLowerCase() === "bearer"
 		) {
 			blocks.push(
-				`    _token = os.environ.get(${JSON.stringify(entry.envVar)})
-    if _token:
-        headers[${JSON.stringify(entry.name)}] = "Bearer " + _token`,
+				`${gate}
+        if not _auth_set:
+            _token = os.environ.get(${JSON.stringify(entry.envVar)})
+            if _token:
+                headers[${JSON.stringify(entry.name)}] = "Bearer " + _token
+                _auth_set = True`,
 			);
 			continue;
 		}
 		if (entry.scheme.type === "oauth2") {
 			blocks.push(
-				`    # oauth2 — token must be obtained externally; set ${entry.envVar} to a valid bearer token.
-    _token = os.environ.get(${JSON.stringify(entry.envVar)})
-    if _token:
-        headers[${JSON.stringify(entry.name)}] = "Bearer " + _token`,
+				`${gate}
+        # oauth2 — token must be obtained externally; set ${entry.envVar} to a valid bearer token.
+        if not _auth_set:
+            _token = os.environ.get(${JSON.stringify(entry.envVar)})
+            if _token:
+                headers[${JSON.stringify(entry.name)}] = "Bearer " + _token
+                _auth_set = True`,
 			);
 			continue;
 		}
 		// apiKey
 		if (entry.in === "query") {
 			blocks.push(
-				`    _key = os.environ.get(${JSON.stringify(entry.envVar)})
-    if _key:
-        params[${JSON.stringify(entry.name)}] = _key`,
+				`${gate}
+        _key = os.environ.get(${JSON.stringify(entry.envVar)})
+        if _key:
+            params[${JSON.stringify(entry.name)}] = _key`,
 			);
 		} else {
 			blocks.push(
-				`    _key = os.environ.get(${JSON.stringify(entry.envVar)})
-    if _key:
-        headers[${JSON.stringify(entry.name)}] = _key`,
+				`${gate}
+        _key = os.environ.get(${JSON.stringify(entry.envVar)})
+        if _key:
+            headers[${JSON.stringify(entry.name)}] = _key`,
 			);
 		}
 	}
