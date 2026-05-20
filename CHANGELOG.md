@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-21
+
+### Added
+
+- **Per-operation auth selection** — generated `applyAuth` (TS) and `apply_auth` (Python) now take an `operationAuth: ReadonlyArray<string>` argument and only apply schemes that the operation actually requires (from the spec's `operation.security`, falling back to a `DEFAULT_AUTH_SCHEMES` constant when the operation has no explicit security). First scheme to set `Authorization` wins — multi-scheme specs like Stripe (basic + bearer) no longer double-stamp the header. Other headers (e.g. `X-API-Key`) are still set independently
+- **Structured `_meta.ruah` on tool definitions** — every tool emitted by `mcp-tool-defs`, `openai-tools` (under `function._meta`), `anthropic-tools`, and the registered MCP servers carries `{ risk, method, path, pagination?, auth?, deprecated? }` in MCP's reserved `_meta` slot. Downstream policy engines, Guard, and `jq` pipelines can read structured metadata instead of grepping descriptions
+- **`.env.example`** generated alongside `mcp-ts-server`, `mcp-python-server`, `a2a-wrapper`, and the plugin scaffolds — lists every auth scheme with its type and env-var name, so users see what they need to set
+- **`--verbose` CLI flag** on `generate` — shows the full validation-warning list. Default behavior is now a one-line summary grouped by warning code (top 5 codes, descending; e.g. `⚠ 421 warnings: 380 missing-param-description, 32 missing-response-schema, 9 unresolved-ref`). `ruah conv validate` still prints every warning unchanged
+- `ToolDefinition` and `ToolDefinitionMeta` types exported from `@ruah-dev/conv-core` for downstream consumers
+- `summarizeWarnings(warnings)` helper exported from `ir/validate.ts`
+
+### Changed
+
+- `enrichToolDescription` joins parts with `\n\n` (was `" "`) and uses full-sentence suffixes ("Risk: destructive — this operation modifies or removes state.") so descriptions read cleanly regardless of source punctuation. The risk hint is still in the description text for clients that don't read `_meta`
+
 ## [0.5.1] - 2026-05-21
 
 ### Fixed
