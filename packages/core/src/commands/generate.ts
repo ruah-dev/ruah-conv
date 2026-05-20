@@ -1,8 +1,7 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync } from "node:fs";
 import type { ParsedArgs } from "../cli.js";
 import { loadConfig } from "../config.js";
-import { generate, getTargets } from "../generators/index.js";
+import { generate, getCapability, getTargets } from "../generators/index.js";
 import {
 	applyOperationProfile,
 	buildEmptyOperationProfileError,
@@ -11,7 +10,9 @@ import {
 } from "../generators/operation-profile.js";
 import { validateIR } from "../ir/validate.js";
 import { parse } from "../parsers/index.js";
+import { applyPaginationOverrides } from "../parsers/shared.js";
 import { logError, logInfo, logSuccess, logWarn } from "../utils/format.js";
+import { writeGeneratedFiles } from "../utils/write-files.js";
 import { resolveOperationProfile } from "./generate-profile.js";
 import { promptForOperationProfile } from "./generate-prompt.js";
 
@@ -47,6 +48,15 @@ export async function run(args: ParsedArgs): Promise<void> {
 		args.named["operation-profile"] as string | undefined,
 		"--operation-profile",
 	);
+	// `--no-auth-wiring` (boolean) disables schema-driven auth wiring. Falls
+	// back to `authWiring: false` in ruah.conv.json; default is enabled.
+	const authWiringFlag =
+		args.flags["no-auth-wiring"] === true ||
+		args.named["no-auth-wiring"] !== undefined
+			? false
+			: undefined;
+	const authWiring =
+		authWiringFlag !== undefined ? authWiringFlag : (config.authWiring ?? true);
 	const configOperationProfile = parseOperationProfile(
 		config.operationProfile,
 		"config operationProfile",
@@ -61,8 +71,40 @@ export async function run(args: ParsedArgs): Promise<void> {
 		process.exit(1);
 	}
 
+	// Validate flags against the target's capability descriptor.
+	const capability = getCapability(targetId);
+	if (capability) {
+		const transportProvided =
+			args.named.transport !== undefined || config.transport !== undefined;
+		if (transportProvided && !capability.supportsTransport) {
+			const transportTargets = targets
+				.filter((t) => getCapability(t.id)?.supportsTransport === true)
+				.map((t) => t.id);
+			logError(
+				`--transport is not supported by target "${targetId}". Supported: ${transportTargets.join(", ")}.`,
+			);
+			process.exit(1);
+		}
+
+		if (jsonMode && capability.emits === "files") {
+			logError(
+				`--json is not supported for multi-file target "${targetId}". Use --output <dir> instead.`,
+			);
+			process.exit(1);
+		}
+
+		const nameProvided =
+			args.named.name !== undefined || config.name !== undefined;
+		if (nameProvided && !capability.supportsName) {
+			logWarn(
+				`--name has no effect on target "${targetId}"; the value will be ignored.`,
+			);
+		}
+	}
+
 	// Parse
-	const ir = parse(specFile);
+	const parsedIr = parse(specFile);
+	const ir = applyPaginationOverrides(parsedIr, config.pagination);
 	const profileResolution = resolveOperationProfile({
 		sourceFormat: ir.meta.sourceFormat,
 		jsonMode,
@@ -106,9 +148,13 @@ export async function run(args: ParsedArgs): Promise<void> {
 		outputPath: outputDir,
 		json: jsonMode,
 		operationProfile,
+		plugin: config.plugin,
+		authWiring,
 	});
 
 	if (jsonMode) {
+		// The capability check above already rejects multi-file targets in JSON
+		// mode; this is a defensive fallback for unknown targets (no capability).
 		if (result.files.length > 1) {
 			logError(
 				`--json is not supported for multi-file target "${targetId}" (would emit ${result.files.length} files). Use --output <dir> instead.`,
@@ -125,15 +171,9 @@ export async function run(args: ParsedArgs): Promise<void> {
 
 	// Write files
 	if (outputDir) {
-		const absOutput = resolve(outputDir);
-		mkdirSync(absOutput, { recursive: true });
-
-		for (const file of result.files) {
-			const filePath = resolve(absOutput, file.path);
-			mkdirSync(dirname(filePath), { recursive: true });
-			writeFileSync(filePath, file.content, "utf8");
-			logSuccess(`Written: ${filePath}`);
-		}
+		writeGeneratedFiles(result.files, outputDir, {
+			onWrite: (filePath) => logSuccess(`Written: ${filePath}`),
+		});
 	} else {
 		// No output dir — print to stdout
 		for (const file of result.files) {

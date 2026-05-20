@@ -1,0 +1,15 @@
+openapi: "3.0.3"
+info:
+  version: "1.0.0"
+  description: This spec is missing info.title
+servers:
+  - url: https://api.example.com
+
+paths:
+  /ping:
+    get:
+      operationId: ping
+      summary: Health check
+      responses:
+        "200":
+          description: OK

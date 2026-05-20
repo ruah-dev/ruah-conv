@@ -6,20 +6,36 @@ import type {
 	RequestBody,
 	RuahToolSchema,
 	TypeDefinition,
+	ValidationWarning,
 } from "../ir/schema.js";
 import { normalizeToolName } from "../naming/index.js";
 import { getMethodFlags } from "./shared.js";
+
+interface ParseContext {
+	warnings: ValidationWarning[];
+}
+
+const BUILTIN_SCALARS = new Set(["String", "Int", "Float", "Boolean", "ID"]);
 
 export function parseGraphQLSDL(
 	filePath: string,
 	content: string,
 ): RuahToolSchema {
 	const sanitized = stripComments(content);
-	const typeDefinitions = extractTypeDefinitions(sanitized);
+	const ctx: ParseContext = { warnings: [] };
+
+	detectUnsupportedKeywords(sanitized, ctx);
+
+	const typeDefinitions = extractTypeDefinitions(sanitized, ctx);
 	const tools = [
-		...extractOperationTools("Query", "GET", typeDefinitions),
-		...extractOperationTools("Mutation", "POST", typeDefinitions),
+		...extractOperationTools("Query", "GET", typeDefinitions, ctx),
+		...extractOperationTools("Mutation", "POST", typeDefinitions, ctx),
 	];
+
+	// Flag dangling refs that aren't built-ins and aren't defined in this SDL —
+	// validateIR will still emit `unresolved-ref`, but a graphql-specific note
+	// helps the user understand the source.
+	flagDanglingRefs(typeDefinitions, ctx);
 
 	return {
 		meta: {
@@ -34,11 +50,73 @@ export function parseGraphQLSDL(
 		auth: [],
 		tools,
 		types: typeDefinitions,
+		parserWarnings: ctx.warnings.length > 0 ? ctx.warnings : undefined,
 	};
+}
+
+function detectUnsupportedKeywords(content: string, ctx: ParseContext): void {
+	const unionRegex = /^\s*union\s+([A-Za-z_]\w*)/gm;
+	for (const match of content.matchAll(unionRegex)) {
+		ctx.warnings.push({
+			path: `types.${match[1]}`,
+			code: "unsupported-graphql-type",
+			message: `Union type "${match[1]}" is not supported by the GraphQL parser — references will be left as unresolved.`,
+		});
+	}
+
+	const interfaceRegex = /^\s*interface\s+([A-Za-z_]\w*)/gm;
+	for (const match of content.matchAll(interfaceRegex)) {
+		ctx.warnings.push({
+			path: `types.${match[1]}`,
+			code: "unsupported-graphql-type",
+			message: `Interface type "${match[1]}" is not supported by the GraphQL parser — references will be left as unresolved.`,
+		});
+	}
+}
+
+function flagDanglingRefs(
+	types: Record<string, TypeDefinition>,
+	ctx: ParseContext,
+): void {
+	const knownNames = new Set(Object.keys(types));
+	const reported = new Set<string>();
+
+	function walk(path: string, type: IRType): void {
+		if (type.kind === "ref") {
+			const name = type.$ref;
+			if (
+				!BUILTIN_SCALARS.has(name) &&
+				!knownNames.has(name) &&
+				!reported.has(name)
+			) {
+				reported.add(name);
+				ctx.warnings.push({
+					path,
+					code: "unsupported-graphql-type",
+					message: `GraphQL type "${name}" referenced at ${path} is not defined in this SDL — emitted as unresolved ref.`,
+				});
+			}
+			return;
+		}
+		if (type.kind === "object") {
+			for (const [propName, prop] of Object.entries(type.properties)) {
+				walk(`${path}.${propName}`, prop.type);
+			}
+			return;
+		}
+		if (type.kind === "array") {
+			walk(`${path}[]`, type.items);
+		}
+	}
+
+	for (const [name, def] of Object.entries(types)) {
+		walk(`types.${name}`, def.type);
+	}
 }
 
 function extractTypeDefinitions(
 	content: string,
+	ctx: ParseContext,
 ): Record<string, TypeDefinition> {
 	const types: Record<string, TypeDefinition> = {};
 
@@ -74,7 +152,7 @@ function extractTypeDefinitions(
 		}
 		types[name] = {
 			name,
-			type: parseObjectLikeDefinition(kind, match[3]),
+			type: parseObjectLikeDefinition(kind, name, match[3], ctx),
 		};
 	}
 
@@ -85,6 +163,7 @@ function extractOperationTools(
 	rootTypeName: "Query" | "Mutation",
 	method: "GET" | "POST",
 	types: Record<string, TypeDefinition>,
+	_ctx: ParseContext,
 ) {
 	const root = types[rootTypeName];
 	if (!root || root.type.kind !== "object") {
@@ -146,7 +225,12 @@ function buildMutationRequestBody(parameters: Parameter[]): RequestBody {
 	};
 }
 
-function parseObjectLikeDefinition(kind: string, body: string): IRObject {
+function parseObjectLikeDefinition(
+	kind: string,
+	ownerName: string,
+	body: string,
+	ctx: ParseContext,
+): IRObject {
 	const properties: IRObject["properties"] = {};
 	const required: string[] = [];
 
@@ -160,6 +244,11 @@ function parseObjectLikeDefinition(kind: string, body: string): IRObject {
 			/^([A-Za-z_]\w*)\s*(\(([^)]*)\))?\s*:\s*([![\]A-Za-z_][![\]A-Za-z_0-9]*)/,
 		);
 		if (!fieldMatch) {
+			ctx.warnings.push({
+				path: `types.${ownerName}`,
+				code: "unsupported-graphql-type",
+				message: `Unparseable field in "${ownerName}": "${line}" — skipped.`,
+			});
 			continue;
 		}
 
@@ -176,7 +265,7 @@ function parseObjectLikeDefinition(kind: string, body: string): IRObject {
 				arguments?: Parameter[];
 				returnType?: IRType;
 			};
-			metadata.arguments = parseArguments(argsGroup);
+			metadata.arguments = parseArguments(argsGroup, ownerName, fieldName, ctx);
 			metadata.returnType = graphQLTypeToIR(typeRef);
 		}
 	}
@@ -188,7 +277,12 @@ function parseObjectLikeDefinition(kind: string, body: string): IRObject {
 	};
 }
 
-function parseArguments(argsGroup: string): Parameter[] {
+function parseArguments(
+	argsGroup: string,
+	ownerName: string,
+	fieldName: string,
+	ctx: ParseContext,
+): Parameter[] {
 	return splitTopLevel(argsGroup, ",")
 		.map((entry) => entry.trim())
 		.filter(Boolean)
@@ -197,6 +291,11 @@ function parseArguments(argsGroup: string): Parameter[] {
 				/^([A-Za-z_]\w*)\s*:\s*([![\]A-Za-z_][![\]A-Za-z_0-9]*)/,
 			);
 			if (!match) {
+				ctx.warnings.push({
+					path: `types.${ownerName}.${fieldName}.arguments`,
+					code: "unsupported-graphql-type",
+					message: `Could not parse argument "${entry}" on field "${ownerName}.${fieldName}" — emitted as unknown.`,
+				});
 				return {
 					name: "arg",
 					in: "query" as const,

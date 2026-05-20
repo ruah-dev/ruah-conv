@@ -1,25 +1,21 @@
-// MCP tool definitions generator — produces a JSON array of MCP-compatible tool definitions.
+// MCP tool definitions generator — JSON array of MCP-compatible tool defs.
 
-import type { RuahToolSchema } from "../../ir/schema.js";
-import type { GenerateResult } from "../index.js";
+import type { GeneratorCapability } from "../capability.js";
+import { defineSimpleGenerator } from "../factory.js";
 import { buildToolDefinitions } from "../shared.js";
 
-export function generate(spec: RuahToolSchema): GenerateResult {
-	const tools = buildToolDefinitions(spec);
+export const capability: GeneratorCapability = {
+	id: "mcp-tool-defs",
+	label: "MCP Tool Definitions",
+	emits: "json",
+	supportsTransport: false,
+	supportsName: false,
+};
 
-	return {
-		files: [
-			{
-				path: "tools.json",
-				content: JSON.stringify(tools, null, 2),
-				language: "json",
-			},
-		],
-		summary: {
-			toolCount: tools.length,
-			typeCount: Object.keys(spec.types).length,
-			targetId: "mcp-tool-defs",
-			warnings: [],
-		},
-	};
-}
+const generator = defineSimpleGenerator({
+	capability,
+	filename: "tools.json",
+	transform: (spec) => buildToolDefinitions(spec),
+});
+
+export const generate = generator.generate;

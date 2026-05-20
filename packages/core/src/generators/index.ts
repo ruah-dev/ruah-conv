@@ -1,23 +1,47 @@
 // Generator registry — maps target IDs to output generators.
 
+import type { PluginConfig } from "../config.js";
 import type { RuahToolSchema } from "../ir/schema.js";
-import { generate as generateA2AWrapper } from "./a2a/index.js";
-import { generate as generateAnthropicTools } from "./anthropic/index.js";
-import { generate as generateMcpPythonServer } from "./mcp-server-python/index.js";
-import { generate as generateMcpTsServer } from "./mcp-server-ts/index.js";
-import { generate as generateMcpToolDefs } from "./mcp-ts/index.js";
-import { generate as generateOpenAITools } from "./openai/index.js";
+import {
+	capability as a2aCapability,
+	generate as generateA2AWrapper,
+} from "./a2a/index.js";
+import {
+	capability as anthropicCapability,
+	generate as generateAnthropicTools,
+} from "./anthropic/index.js";
+import type { GeneratorCapability } from "./capability.js";
+import {
+	generate as generateMcpPythonServer,
+	capability as mcpPythonCapability,
+} from "./mcp-server-python/index.js";
+import {
+	generate as generateMcpTsServer,
+	capability as mcpTsServerCapability,
+} from "./mcp-server-ts/index.js";
+import {
+	generate as generateMcpToolDefs,
+	capability as mcpToolDefsCapability,
+} from "./mcp-ts/index.js";
+import {
+	generate as generateOpenAITools,
+	capability as openaiCapability,
+} from "./openai/index.js";
 import {
 	applyOperationProfile,
 	buildEmptyOperationProfileError,
 	type OperationProfile,
 } from "./operation-profile.js";
 import {
+	claudeCodeCapability,
+	codexCapability,
 	generateClaudeCodePlugin,
 	generateCodexPlugin,
 } from "./plugin-ts/index.js";
 
 // ── Public types ─────────────────────────────────────────────────────
+
+export type { GeneratorCapability } from "./capability.js";
 
 export interface GeneratorInfo {
 	id: string;
@@ -31,6 +55,16 @@ export interface GenerateOptions {
 	name?: string;
 	transport?: "stdio" | "streamable-http" | "sse" | "all";
 	operationProfile?: OperationProfile;
+	plugin?: PluginConfig;
+	/**
+	 * When `true` (default) the scaffold targets that emit a runtime
+	 * (`mcp-ts-server`, `mcp-python-server`, `a2a-wrapper`, plugin targets)
+	 * generate code that reads auth credentials from environment variables
+	 * and injects the headers/query params declared in the spec's auth
+	 * schemes. Set to `false` to fall back to a no-op `applyAuth` stub the
+	 * user fills in themselves.
+	 */
+	authWiring?: boolean;
 }
 
 export interface GenerateResult {
@@ -99,11 +133,40 @@ const TARGETS: GeneratorInfo[] = [
 	},
 ];
 
+const CAPABILITIES: Record<string, GeneratorCapability> = {
+	[mcpToolDefsCapability.id]: mcpToolDefsCapability,
+	[mcpTsServerCapability.id]: mcpTsServerCapability,
+	[mcpPythonCapability.id]: mcpPythonCapability,
+	[openaiCapability.id]: openaiCapability,
+	[anthropicCapability.id]: anthropicCapability,
+	[a2aCapability.id]: a2aCapability,
+	[claudeCodeCapability.id]: claudeCodeCapability,
+	[codexCapability.id]: codexCapability,
+};
+
 /**
  * List all available output targets.
  */
 export function getTargets(): GeneratorInfo[] {
 	return TARGETS;
+}
+
+/**
+ * Get the capability descriptor for a target, or `undefined` if unknown.
+ */
+export function getCapability(
+	targetId: string,
+): GeneratorCapability | undefined {
+	return CAPABILITIES[targetId];
+}
+
+/**
+ * Get a snapshot of every registered capability, keyed by target id.
+ */
+export function getCapabilities(): Readonly<
+	Record<string, GeneratorCapability>
+> {
+	return CAPABILITIES;
 }
 
 /**

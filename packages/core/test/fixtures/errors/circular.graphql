@@ -1,0 +1,27 @@
+type Query {
+	getNode(id: ID!): Node
+	getThings(filter: BadFilter): [Thing!]!
+}
+
+# Union type — not supported by the parser, should emit
+# unsupported-graphql-type warning.
+union Node = Person | Place
+
+type Person {
+	id: ID!
+	name: String!
+	friend: Person
+}
+
+type Place {
+	id: ID!
+	label: String!
+}
+
+# Field reference to an undefined type — should also emit
+# unsupported-graphql-type warning.
+type Thing {
+	id: ID!
+	related: Thing
+	parent: UndefinedType
+}

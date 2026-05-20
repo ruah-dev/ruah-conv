@@ -19,6 +19,8 @@
 		"start": "node dist/cli.js",
 		"pretest": "tsc -p tsconfig.test.json",
 		"test": "node --test dist-test/test/*.test.js",
+		"pretest:integration": "tsc -p tsconfig.test.json",
+		"test:integration": "RUN_INTEGRATION=1 node --test dist-test/test/integration/*.integration.test.js",
 		"lint": "biome check . --config-path ./biome.core.json",
 		"format": "biome check --write . --config-path ./biome.core.json",
 		"typecheck": "tsc --noEmit",

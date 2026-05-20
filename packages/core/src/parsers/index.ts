@@ -4,10 +4,14 @@ import { readFileSync } from "node:fs";
 import { extname } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { RuahToolSchema, SourceFormat } from "../ir/schema.js";
+import { formatLabel, SpecParseError } from "./errors.js";
 import { parseGraphQLSDL } from "./graphql.js";
+import { parseHar } from "./har.js";
 import { parseOpenAPI } from "./openapi.js";
 import { parsePostmanCollection } from "./postman.js";
 import { parseSwagger } from "./swagger.js";
+
+export { SpecParseError } from "./errors.js";
 
 export interface ParserInfo {
 	id: string;
@@ -23,6 +27,12 @@ export function detectFormat(
 	content: string,
 	filePath?: string,
 ): SourceFormat | null {
+	// Fast path: .har extension wins before JSON parsing (HAR files are valid
+	// JSON but the structure check below is also a reliable sniff).
+	if (filePath && extname(filePath).toLowerCase() === ".har") {
+		return "har" as unknown as SourceFormat;
+	}
+
 	let doc: Record<string, unknown>;
 
 	try {
@@ -33,6 +43,11 @@ export function detectFormat(
 		} catch {
 			return detectGraphQLSDL(content, filePath) ? "graphql-sdl" : null;
 		}
+	}
+
+	const log = doc.log as Record<string, unknown> | undefined;
+	if (log && Array.isArray(log.entries) && typeof log.version === "string") {
+		return "har" as unknown as SourceFormat;
 	}
 
 	const openapi = doc.openapi;
@@ -62,41 +77,90 @@ export function detectFormat(
 /**
  * Parse a spec file into the Ruah Tool Schema IR.
  * Auto-detects the format from the file content.
+ *
+ * Any failure (file read, format detection, YAML/JSON parse, parser-specific
+ * failure) throws a SpecParseError with the source path, detected format,
+ * and underlying cause attached.
  */
 export function parse(filePath: string): RuahToolSchema {
-	const content = readFileSync(filePath, "utf8");
-	const format = detectFormat(content, filePath);
+	let format: SourceFormat | "unknown" = "unknown";
 
-	if (!format) {
-		throw new Error(
-			`Cannot detect spec format for "${filePath}". Expected OpenAPI 3.x, Swagger 2.0, Postman v2.1, or GraphQL SDL.`,
+	let content: string;
+	try {
+		content = readFileSync(filePath, "utf8");
+	} catch (cause) {
+		const message = cause instanceof Error ? cause.message : String(cause);
+		throw new SpecParseError(
+			`Failed to read spec at ${filePath}: ${message}`,
+			filePath,
+			format,
+			cause,
 		);
 	}
 
-	switch (format) {
-		case "openapi-3.0":
-		case "openapi-3.1":
-		case "swagger-2.0":
-		case "postman-v2.1": {
-			let doc: Record<string, unknown>;
-			try {
-				doc = JSON.parse(content) as Record<string, unknown>;
-			} catch {
-				doc = parseYaml(content) as Record<string, unknown>;
-			}
+	let detected: SourceFormat | null;
+	try {
+		detected = detectFormat(content, filePath);
+	} catch (cause) {
+		const message = cause instanceof Error ? cause.message : String(cause);
+		throw new SpecParseError(
+			`Failed to detect spec format for ${filePath}: ${message}`,
+			filePath,
+			format,
+			cause,
+		);
+	}
 
-			if (format === "swagger-2.0") {
-				return parseSwagger(filePath, doc);
-			}
-			if (format === "postman-v2.1") {
-				return parsePostmanCollection(filePath, doc);
-			}
-			return parseOpenAPI(filePath, doc);
+	if (!detected) {
+		throw new SpecParseError(
+			`Cannot detect spec format for "${filePath}". Expected OpenAPI 3.x, Swagger 2.0, Postman v2.1, GraphQL SDL, or HAR.`,
+			filePath,
+			"unknown",
+		);
+	}
+
+	format = detected;
+
+	try {
+		if ((detected as string) === "har") {
+			return parseHar(filePath, content);
 		}
-		case "graphql-sdl":
-			return parseGraphQLSDL(filePath, content);
-		default:
-			throw new Error(`Unsupported format: ${format}`);
+		switch (detected) {
+			case "openapi-3.0":
+			case "openapi-3.1":
+			case "swagger-2.0":
+			case "postman-v2.1": {
+				let doc: Record<string, unknown>;
+				try {
+					doc = JSON.parse(content) as Record<string, unknown>;
+				} catch {
+					doc = parseYaml(content) as Record<string, unknown>;
+				}
+
+				if (detected === "swagger-2.0") {
+					return parseSwagger(filePath, doc);
+				}
+				if (detected === "postman-v2.1") {
+					return parsePostmanCollection(filePath, doc);
+				}
+				return parseOpenAPI(filePath, doc);
+			}
+			case "graphql-sdl":
+				return parseGraphQLSDL(filePath, content);
+			default:
+				throw new Error(`Unsupported format: ${detected}`);
+		}
+	} catch (cause) {
+		if (cause instanceof SpecParseError) {
+			throw cause;
+		}
+		const message = cause instanceof Error ? cause.message : String(cause);
+		throw new SpecParseError(
+			`Failed to parse ${formatLabel(format)} spec at ${filePath}: ${message}`,
+			filePath,
+			format,
+			cause,
+		);
 	}
 }
 
@@ -124,6 +188,11 @@ export function getSupportedFormats(): ParserInfo[] {
 			id: "graphql",
 			name: "GraphQL SDL",
 			formats: ["graphql-sdl"],
+		},
+		{
+			id: "har",
+			name: "HAR Capture",
+			formats: ["har"],
 		},
 	];
 }

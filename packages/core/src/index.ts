@@ -4,10 +4,16 @@ export type {
 	GeneratedFile,
 	GenerateOptions,
 	GenerateResult,
+	GeneratorCapability,
 	GeneratorInfo,
 } from "./generators/index.js";
 // Generation
-export { generate, getTargets } from "./generators/index.js";
+export {
+	generate,
+	getCapabilities,
+	getCapability,
+	getTargets,
+} from "./generators/index.js";
 // IR types
 export type {
 	AuthSchema,
@@ -42,4 +48,9 @@ export {
 	synthesizeToolName,
 } from "./naming/index.js";
 // Parsing
-export { detectFormat, getSupportedFormats, parse } from "./parsers/index.js";
+export {
+	detectFormat,
+	getSupportedFormats,
+	parse,
+	SpecParseError,
+} from "./parsers/index.js";

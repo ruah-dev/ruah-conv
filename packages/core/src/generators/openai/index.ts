@@ -1,30 +1,27 @@
-import type { RuahToolSchema } from "../../ir/schema.js";
-import type { GenerateResult } from "../index.js";
+import type { GeneratorCapability } from "../capability.js";
+import { defineSimpleGenerator } from "../factory.js";
 import { buildToolDefinitions } from "../shared.js";
 
-export function generate(spec: RuahToolSchema): GenerateResult {
-	const tools = buildToolDefinitions(spec).map((tool) => ({
-		type: "function",
-		function: {
-			name: tool.name,
-			description: tool.description,
-			parameters: tool.inputSchema,
-		},
-	}));
+export const capability: GeneratorCapability = {
+	id: "openai-tools",
+	label: "OpenAI Tools",
+	emits: "json",
+	supportsTransport: false,
+	supportsName: false,
+};
 
-	return {
-		files: [
-			{
-				path: "openai-tools.json",
-				content: JSON.stringify(tools, null, 2),
-				language: "json",
+const generator = defineSimpleGenerator({
+	capability,
+	filename: "openai-tools.json",
+	transform: (spec) =>
+		buildToolDefinitions(spec).map((tool) => ({
+			type: "function",
+			function: {
+				name: tool.name,
+				description: tool.description,
+				parameters: tool.inputSchema,
 			},
-		],
-		summary: {
-			toolCount: tools.length,
-			typeCount: Object.keys(spec.types).length,
-			targetId: "openai-tools",
-			warnings: [],
-		},
-	};
-}
+		})),
+});
+
+export const generate = generator.generate;

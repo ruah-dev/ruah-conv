@@ -8,6 +8,9 @@ export interface RuahToolSchema {
 	auth: AuthSchema[];
 	tools: Tool[];
 	types: Record<string, TypeDefinition>;
+	// Optional: warnings collected at parse time (e.g. unsupported constructs)
+	// that downstream consumers should surface alongside validateIR output.
+	parserWarnings?: ValidationWarning[];
 }
 
 // ── Metadata ─────────────────────────────────────────────────────────
@@ -199,4 +202,5 @@ export type WarningCode =
 	| "unknown-type"
 	| "unresolved-ref"
 	| "missing-param-description"
-	| "no-operations";
+	| "no-operations"
+	| "unsupported-graphql-type";

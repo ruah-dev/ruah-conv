@@ -1,0 +1,11 @@
+openapi: "3.0.3
+info:
+  title: Malformed
+  version: "1.0.0
+paths:
+  /broken: {unterminated
+    get:
+       - bad
+      mixed: indent
+  - list_at_wrong_level
+   wrong: indent

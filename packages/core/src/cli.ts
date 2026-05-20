@@ -90,6 +90,7 @@ Options:
   --operation-profile <profile>
                        OpenAPI/Swagger operation preset (read-only, standard, all)
   --config <path>      Load generation defaults from a JSON config file
+  --no-auth-wiring     Skip schema-driven auth wiring in scaffold targets
   --json               Output as JSON (for composition with other tools)
   --help, -h           Show this help
   --version, -v        Show version

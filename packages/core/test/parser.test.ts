@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { detectFormat, parse } from "../src/parsers/index.js";
+import { validateIR } from "../src/ir/validate.js";
+import { detectFormat, parse, SpecParseError } from "../src/parsers/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Fixtures live in source tree — resolve from project root, not dist-test
@@ -36,6 +37,13 @@ const GRAPHQL = resolve(
 	"fixtures",
 	"graphql",
 	"schema.graphql",
+);
+const HAR_SAMPLE = resolve(
+	PROJECT_ROOT,
+	"test",
+	"fixtures",
+	"har",
+	"sample.har",
 );
 
 describe("detectFormat", () => {
@@ -220,8 +228,109 @@ describe("parse petstore.yaml", () => {
 });
 
 describe("parse error cases", () => {
-	it("throws for non-existent file", () => {
-		assert.throws(() => parse("/does/not/exist.yaml"), /ENOENT/);
+	it("throws SpecParseError for non-existent file", () => {
+		assert.throws(
+			() => parse("/does/not/exist.yaml"),
+			(err: unknown) => {
+				assert.ok(err instanceof SpecParseError, "expected SpecParseError");
+				assert.equal(err.path, "/does/not/exist.yaml");
+				assert.equal(err.format, "unknown");
+				assert.ok(err.cause, "expected cause to be populated");
+				return true;
+			},
+		);
+	});
+
+	it("throws SpecParseError for malformed YAML", () => {
+		const malformed = resolve(
+			PROJECT_ROOT,
+			"test",
+			"fixtures",
+			"errors",
+			"malformed.yaml",
+		);
+		assert.throws(
+			() => parse(malformed),
+			(err: unknown) => {
+				assert.ok(err instanceof SpecParseError, "expected SpecParseError");
+				assert.equal(err.path, malformed);
+				// Either format detection failed entirely ("unknown") or parsing
+				// failed after partial detection — both are valid here. What matters
+				// is the wrapper class and the path are correct.
+				assert.ok(
+					err.format === "unknown" || typeof err.format === "string",
+					`unexpected format on error: ${String(err.format)}`,
+				);
+				assert.ok(err.message.includes(malformed));
+				return true;
+			},
+		);
+	});
+
+	it("produces unresolved-ref warning for broken $ref", () => {
+		const brokenRef = resolve(
+			PROJECT_ROOT,
+			"test",
+			"fixtures",
+			"errors",
+			"broken-ref.yaml",
+		);
+		const ir = parse(brokenRef);
+		const warnings = validateIR(ir);
+		const unresolved = warnings.filter((w) => w.code === "unresolved-ref");
+		assert.ok(
+			unresolved.length > 0,
+			"expected at least one unresolved-ref warning",
+		);
+		assert.ok(
+			unresolved.some((w) => w.message.includes("DoesNotExist")),
+			"expected warning to reference the missing schema name",
+		);
+	});
+
+	it("falls back to 'Untitled API' when info.title is missing", () => {
+		const missingTitle = resolve(
+			PROJECT_ROOT,
+			"test",
+			"fixtures",
+			"errors",
+			"missing-info-title.yaml",
+		);
+		const ir = parse(missingTitle);
+		assert.equal(ir.meta.title, "Untitled API");
+		// Parsing should still succeed and produce at least one tool.
+		assert.ok(ir.tools.length > 0);
+	});
+});
+
+describe("parse GraphQL error paths", () => {
+	it("emits unsupported-graphql-type for union types and undefined refs", () => {
+		const circular = resolve(
+			PROJECT_ROOT,
+			"test",
+			"fixtures",
+			"errors",
+			"circular.graphql",
+		);
+		const ir = parse(circular);
+		const warnings = validateIR(ir);
+		const unsupported = warnings.filter(
+			(w) => w.code === "unsupported-graphql-type",
+		);
+		assert.ok(
+			unsupported.length > 0,
+			"expected at least one unsupported-graphql-type warning",
+		);
+		// Should flag the union type by name.
+		assert.ok(
+			unsupported.some((w) => w.message.includes("Node")),
+			"expected union type Node to be flagged",
+		);
+		// Should flag the dangling reference to UndefinedType.
+		assert.ok(
+			unsupported.some((w) => w.message.includes("UndefinedType")),
+			"expected dangling ref UndefinedType to be flagged",
+		);
 	});
 });
 
@@ -248,6 +357,79 @@ describe("parse Postman collection", () => {
 		assert.equal(ir.tools.length, 2);
 		assert.ok(ir.tools.some((tool) => tool.name === "listInvoices"));
 		assert.ok(ir.tools.some((tool) => tool.name === "createInvoice"));
+	});
+});
+
+describe("parse HAR", () => {
+	it("detects HAR from .har extension", () => {
+		assert.equal(
+			detectFormat('{"log":{"version":"1.2","entries":[]}}', HAR_SAMPLE),
+			"har",
+		);
+	});
+
+	it("detects HAR from content sniffing without extension", () => {
+		const content = JSON.stringify({
+			log: { version: "1.2", entries: [] },
+		});
+		assert.equal(detectFormat(content), "har");
+	});
+
+	it("collapses /users/{id} entries via path-template inference", () => {
+		const ir = parse(HAR_SAMPLE);
+		const paths = ir.tools.map((tool) => `${tool.method} ${tool.path}`);
+		// /users/123 and /users/456 collapse into one GET /users/{id}
+		assert.ok(paths.includes("GET /users/{id}"));
+		assert.ok(paths.includes("GET /users"));
+		assert.ok(paths.includes("POST /users"));
+		assert.ok(paths.includes("DELETE /users/{id}"));
+	});
+
+	it("extracts query params from a GET entry", () => {
+		const ir = parse(HAR_SAMPLE);
+		const listUsers = ir.tools.find(
+			(tool) => tool.method === "GET" && tool.path === "/users",
+		);
+		assert.ok(listUsers);
+		const limit = listUsers.parameters.find((param) => param.name === "limit");
+		assert.ok(limit);
+		assert.equal(limit.in, "query");
+		assert.equal(limit.schema.kind, "integer");
+	});
+
+	it("detects bearer auth from Authorization headers", () => {
+		const ir = parse(HAR_SAMPLE);
+		assert.ok(ir.auth.some((scheme) => scheme.scheme === "bearer"));
+	});
+
+	it("sets baseUrl to the common origin", () => {
+		const ir = parse(HAR_SAMPLE);
+		assert.equal(ir.meta.baseUrl, "https://api.example.com");
+		assert.equal(ir.meta.sourceFormat, "har");
+	});
+
+	it("infers a JSON body schema for a POST entry", () => {
+		const ir = parse(HAR_SAMPLE);
+		const createUser = ir.tools.find(
+			(tool) => tool.method === "POST" && tool.path === "/users",
+		);
+		assert.ok(createUser?.requestBody);
+		assert.equal(createUser.requestBody.contentType, "application/json");
+		assert.equal(createUser.requestBody.schema.kind, "object");
+	});
+
+	it("throws SpecParseError with format 'har' for malformed input", () => {
+		const dir = mkdtempSync(resolve(tmpdir(), "ruah-conv-har-"));
+		const bad = resolve(dir, "bad.har");
+		writeFileSync(bad, '{"log":{"version":"1.2"}}', "utf8");
+		assert.throws(
+			() => parse(bad),
+			(err: unknown) => {
+				assert.ok(err instanceof SpecParseError);
+				assert.equal(err.format, "har");
+				return true;
+			},
+		);
 	});
 });
 

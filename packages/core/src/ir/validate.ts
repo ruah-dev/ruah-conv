@@ -14,6 +14,13 @@ export function validateIR(spec: RuahToolSchema): ValidationWarning[] {
 		warnings.push({ path, code, message });
 	}
 
+	// Surface any warnings the parser recorded (e.g. unsupported constructs).
+	if (spec.parserWarnings) {
+		for (const w of spec.parserWarnings) {
+			warnings.push(w);
+		}
+	}
+
 	// Meta checks
 	if (!spec.meta.baseUrl) {
 		warn(
