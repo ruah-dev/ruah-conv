@@ -1,10 +1,23 @@
 import type { RuahToolSchema } from "../../ir/schema.js";
+import type { GeneratorCapability } from "../capability.js";
 import type { GenerateOptions, GenerateResult } from "../index.js";
 import {
+	type AuthWiringPlan,
+	buildAuthWiringPlan,
 	buildOperationSpecs,
 	buildToolDefinitions,
 	buildToolInputSchema,
+	renderAuthEnvVarBanner,
+	renderAuthWiringTs,
 } from "../shared.js";
+
+export const capability: GeneratorCapability = {
+	id: "a2a-wrapper",
+	label: "A2A Wrapper",
+	emits: "files",
+	supportsTransport: false,
+	supportsName: true,
+};
 
 export function generate(
 	spec: RuahToolSchema,
@@ -25,6 +38,7 @@ export function generate(
 			auth: tool.auth ?? [],
 		};
 	});
+	const authPlan = buildAuthWiringPlan(spec.auth, options.authWiring !== false);
 
 	return {
 		files: [
@@ -52,6 +66,7 @@ export function generate(
 					spec.meta.baseUrl,
 					tools,
 					operations,
+					authPlan,
 				),
 			},
 		],
@@ -73,8 +88,12 @@ function buildA2ASource(
 		inputSchema: Record<string, unknown>;
 	}>,
 	operations: Array<Record<string, unknown>>,
+	authPlan: AuthWiringPlan,
 ): string {
-	return `import { createServer } from "node:http";
+	const authBanner = renderAuthEnvVarBanner(authPlan, "//");
+	const authBody = renderAuthWiringTs(authPlan);
+
+	return `${authBanner}import { createServer } from "node:http";
 
 const API_BASE_URL = process.env.API_BASE_URL ?? ${JSON.stringify(baseUrl ?? "http://localhost:3000")};
 const OPERATIONS = ${JSON.stringify(Object.fromEntries(operations.map((operation) => [operation.name, operation])), null, 2)};
@@ -143,7 +162,7 @@ async function invokeOperation(operation, args) {
     if (param.in === "header") headers[param.name] = String(value);
   }
 
-  applyAuth(headers);
+  applyAuth(headers, url);
 
   let body;
   if (operation.requestBody) {
@@ -182,13 +201,10 @@ function interpolatePath(pathname, args) {
   });
 }
 
-function applyAuth(headers) {
-  if (process.env.API_KEY) {
-    headers["x-api-key"] = process.env.API_KEY;
-  }
-  if (process.env.BEARER_TOKEN) {
-    headers.authorization = "Bearer " + process.env.BEARER_TOKEN;
-  }
-}
+function applyAuth(headers, url) {
+  // The \`url\` parameter is used when an auth scheme injects into the query
+  // string (e.g. apiKey in: query). Silence unused-var warnings otherwise.
+  void url;
+${authBody}}
 `;
 }

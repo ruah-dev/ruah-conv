@@ -1,10 +1,23 @@
 import type { RuahToolSchema } from "../../ir/schema.js";
+import type { GeneratorCapability } from "../capability.js";
 import type { GenerateOptions, GenerateResult } from "../index.js";
 import {
+	type AuthWiringPlan,
+	buildAuthWiringPlan,
 	buildOperationSpecs,
 	buildToolDefinitions,
 	buildToolInputSchema,
+	renderAuthEnvVarBanner,
+	renderAuthWiringTs,
 } from "../shared.js";
+
+export const capability: GeneratorCapability = {
+	id: "mcp-ts-server",
+	label: "MCP TypeScript Server",
+	emits: "files",
+	supportsTransport: true,
+	supportsName: true,
+};
 
 export function generate(
 	spec: RuahToolSchema,
@@ -26,6 +39,7 @@ export function generate(
 			auth: tool.auth ?? [],
 		};
 	});
+	const authPlan = buildAuthWiringPlan(spec.auth, options.authWiring !== false);
 
 	return {
 		files: [
@@ -88,6 +102,7 @@ export function generate(
 					spec.meta.baseUrl,
 					toolDefs,
 					operations,
+					authPlan,
 				),
 			},
 			{
@@ -119,6 +134,7 @@ function buildSharedServerSource(
 		inputSchema: Record<string, unknown>;
 	}>,
 	operations: Array<Record<string, unknown>>,
+	authPlan: AuthWiringPlan,
 ): string {
 	const registrations = toolDefs
 		.map((tool) => {
@@ -135,7 +151,10 @@ function buildSharedServerSource(
 		})
 		.join("\n\n");
 
-	return `import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+	const authBanner = renderAuthEnvVarBanner(authPlan, "//");
+	const authBody = renderAuthWiringTs(authPlan);
+
+	return `${authBanner}import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
@@ -190,7 +209,7 @@ async function invokeOperation(
     }
   }
 
-  applyAuth(headers);
+  applyAuth(headers, url);
 
   let body: string | undefined;
   if (operation.requestBody) {
@@ -263,17 +282,12 @@ function interpolatePath(pathname: string, args: Record<string, unknown>) {
   });
 }
 
-function applyAuth(headers: Record<string, string>) {
-  const apiKey = process.env.API_KEY;
-  if (apiKey) {
-    headers["x-api-key"] = apiKey;
-  }
-
-  const bearer = process.env.BEARER_TOKEN;
-  if (bearer) {
-    headers.authorization = \`Bearer \${bearer}\`;
-  }
-}
+function applyAuth(headers: Record<string, string>, url: URL) {
+  // The \`url\` parameter is used when an auth scheme injects into the query
+  // string (e.g. apiKey in: query). Suppress unused-var noise when only
+  // header-based schemes are present.
+  void url;
+${authBody}}
 `;
 }
 

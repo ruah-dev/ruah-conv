@@ -10,6 +10,7 @@ import { loadConfig } from "../src/config.js";
 import { generate, getTargets } from "../src/generators/index.js";
 import type { RuahToolSchema, Tool } from "../src/ir/schema.js";
 import { parse } from "../src/parsers/index.js";
+import { writeGeneratedFiles as writeGeneratedFilesGuarded } from "../src/utils/write-files.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "..", "..");
@@ -179,6 +180,260 @@ describe("generate mcp-tool-defs", () => {
 			["listPets", "createPet", "getPet"],
 		);
 		assert.equal(result.summary.toolCount, 3);
+	});
+});
+
+describe("semantic correctness — JSON targets", () => {
+	for (const target of ["mcp-tool-defs", "openai-tools", "anthropic-tools"]) {
+		describe(target, () => {
+			function loadTools(): Array<Record<string, unknown>> {
+				const ir = parse(PETSTORE);
+				const result = generate(target, ir);
+				return JSON.parse(result.files[0].content) as Array<
+					Record<string, unknown>
+				>;
+			}
+
+			function pickToolByName(
+				tools: Array<Record<string, unknown>>,
+				name: string,
+			): Record<string, unknown> {
+				// openai-tools wraps under `function`; others put name on the root.
+				const direct = tools.find((t) => t.name === name);
+				if (direct) return direct;
+				const wrapped = tools.find(
+					(t) =>
+						typeof t.function === "object" &&
+						t.function !== null &&
+						(t.function as Record<string, unknown>).name === name,
+				);
+				assert.ok(wrapped, `expected to find tool ${name}`);
+				return wrapped.function as Record<string, unknown>;
+			}
+
+			function getSchema(
+				tool: Record<string, unknown>,
+			): Record<string, unknown> {
+				// mcp-tool-defs uses inputSchema; anthropic uses input_schema; openai (after pick) uses parameters.
+				return (tool.inputSchema ??
+					tool.input_schema ??
+					tool.parameters) as Record<string, unknown>;
+			}
+
+			function getDescription(tool: Record<string, unknown>): string {
+				return tool.description as string;
+			}
+
+			it("required:true source params surface in inputSchema.required", () => {
+				const tools = loadTools();
+				const getPet = pickToolByName(tools, "getPet");
+				const schema = getSchema(getPet);
+				assert.deepEqual(schema.required, ["petId"]);
+			});
+
+			it("integer params preserve minimum/maximum constraints", () => {
+				const tools = loadTools();
+				const listPets = pickToolByName(tools, "listPets");
+				const schema = getSchema(listPets);
+				const props = schema.properties as Record<
+					string,
+					Record<string, unknown>
+				>;
+				assert.equal(props.limit.type, "integer");
+				assert.equal(props.limit.minimum, 1);
+				assert.equal(props.limit.maximum, 100);
+			});
+
+			it("enum values propagate through to the JSON schema", () => {
+				// Inline spec — petstore exposes enums only on response schemas, so
+				// we synthesize a minimal spec where an enum lives on an input
+				// parameter to assert preservation through every JSON target.
+				const enumSpec: RuahToolSchema = {
+					meta: {
+						title: "Status API",
+						version: "1.0.0",
+						sourceFormat: "openapi-3.0",
+						sourceFile: "inline.yaml",
+						generatedAt: new Date().toISOString(),
+						baseUrl: "https://example.com",
+					},
+					auth: [],
+					types: {},
+					tools: [
+						{
+							name: "filterPets",
+							description: "Filter pets by status",
+							method: "GET",
+							path: "/pets",
+							parameters: [
+								{
+									name: "status",
+									in: "query",
+									required: false,
+									description: "Availability status",
+									schema: {
+										kind: "enum",
+										values: ["available", "pending", "sold"],
+									},
+								},
+							],
+							responses: [],
+							idempotent: true,
+							readOnly: true,
+							riskLevel: "safe",
+						},
+					],
+				};
+
+				const result = generate(target, enumSpec);
+				const content = result.files[0].content;
+				assert.match(
+					content,
+					/"enum":\s*\[\s*"available",\s*"pending",\s*"sold"\s*\]/,
+					"expected enum values to be preserved verbatim",
+				);
+			});
+
+			it("destructive operations carry a risk marker in the description", () => {
+				const tools = loadTools();
+				const deletePet = pickToolByName(tools, "deletePet");
+				const description = getDescription(deletePet);
+				assert.match(
+					description,
+					/destructive/i,
+					"DELETE operations must surface the destructive risk label",
+				);
+			});
+
+			it("paginated operations surface pagination hints in the description", () => {
+				const tools = loadTools();
+				const listPets = pickToolByName(tools, "listPets");
+				const description = getDescription(listPets);
+				assert.match(
+					description,
+					/pagination|offset|cursor/i,
+					"paginated operations must surface pagination metadata in the description",
+				);
+			});
+		});
+	}
+});
+
+describe("semantic correctness — scaffold targets", () => {
+	it("mcp-ts-server OPERATIONS map contains every tool by name", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("mcp-ts-server", ir, { name: "Petstore Server" });
+		const generatedTs = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generatedTs);
+		for (const tool of ir.tools) {
+			assert.ok(
+				generatedTs.content.includes(`"${tool.name}"`) ||
+					generatedTs.content.includes(`'${tool.name}'`),
+				`expected ${tool.name} to appear in src/generated.ts`,
+			);
+		}
+	});
+
+	it("claude-code plugin scaffold lists every tool in the generated server", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("claude-code-plugin-ts", ir, {
+			name: "Petstore Plugin",
+		});
+		const generatedTs = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generatedTs);
+		for (const tool of ir.tools) {
+			assert.ok(
+				generatedTs.content.includes(`"${tool.name}"`) ||
+					generatedTs.content.includes(`'${tool.name}'`),
+				`expected ${tool.name} to appear in src/generated.ts`,
+			);
+		}
+	});
+});
+
+describe("generator capabilities", () => {
+	it("every registered target has a capability descriptor", async () => {
+		const { getCapability } = await import("../src/generators/index.js");
+		for (const target of getTargets()) {
+			const cap = getCapability(target.id);
+			assert.ok(cap, `expected capability for target ${target.id}`);
+			assert.equal(cap?.id, target.id);
+			assert.ok(cap?.label.length > 0);
+			assert.ok(cap?.emits === "json" || cap?.emits === "files");
+		}
+	});
+
+	it("classifies JSON vs file-emitting targets", async () => {
+		const { getCapability } = await import("../src/generators/index.js");
+		assert.equal(getCapability("mcp-tool-defs")?.emits, "json");
+		assert.equal(getCapability("openai-tools")?.emits, "json");
+		assert.equal(getCapability("anthropic-tools")?.emits, "json");
+		assert.equal(getCapability("mcp-ts-server")?.emits, "files");
+		assert.equal(getCapability("mcp-python-server")?.emits, "files");
+		assert.equal(getCapability("a2a-wrapper")?.emits, "files");
+		assert.equal(getCapability("claude-code-plugin-ts")?.emits, "files");
+		assert.equal(getCapability("codex-plugin-ts")?.emits, "files");
+	});
+
+	it("supportsTransport reflects which scaffolds run a server", async () => {
+		const { getCapability } = await import("../src/generators/index.js");
+		assert.equal(getCapability("mcp-tool-defs")?.supportsTransport, false);
+		assert.equal(getCapability("openai-tools")?.supportsTransport, false);
+		assert.equal(getCapability("anthropic-tools")?.supportsTransport, false);
+		assert.equal(getCapability("mcp-ts-server")?.supportsTransport, true);
+		assert.equal(getCapability("mcp-python-server")?.supportsTransport, true);
+		assert.equal(getCapability("a2a-wrapper")?.supportsTransport, false);
+	});
+});
+
+describe("CLI flag validation", () => {
+	const CLI = resolve(PROJECT_ROOT, "dist", "cli.js");
+
+	it("rejects --transport when the target does not support it", () => {
+		const cli = spawnSync(
+			process.execPath,
+			[
+				CLI,
+				"generate",
+				PETSTORE,
+				"--target",
+				"mcp-tool-defs",
+				"--transport",
+				"stdio",
+			],
+			{ encoding: "utf8" },
+		);
+		assert.notEqual(cli.status, 0);
+		assert.match(cli.stderr, /--transport is not supported/);
+	});
+
+	it("rejects --json for multi-file targets", () => {
+		const cli = spawnSync(
+			process.execPath,
+			[CLI, "generate", PETSTORE, "--target", "mcp-ts-server", "--json"],
+			{ encoding: "utf8" },
+		);
+		assert.notEqual(cli.status, 0);
+		assert.match(cli.stderr, /--json is not supported for multi-file target/);
+	});
+
+	it("warns (does not error) when --name is passed to a target that ignores it", () => {
+		const cli = spawnSync(
+			process.execPath,
+			[
+				CLI,
+				"generate",
+				PETSTORE,
+				"--target",
+				"mcp-tool-defs",
+				"--name",
+				"Cosmetic Name",
+				"--json",
+			],
+			{ encoding: "utf8" },
+		);
+		assert.equal(cli.status, 0, cli.stderr);
+		assert.match(cli.stderr, /--name has no effect/);
 	});
 });
 
@@ -475,6 +730,237 @@ describe("generate new roadmap targets", () => {
 	});
 });
 
+describe("runtime auth wiring", () => {
+	it("mcp-ts-server emits the spec's apiKey header + env var by default", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("mcp-ts-server", ir, { name: "Petstore" });
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		assert.match(generated.content, /API_KEY/);
+		assert.match(generated.content, /X-API-Key/);
+		// applyAuth is called with both headers and url so query-param schemes
+		// work too.
+		assert.match(generated.content, /applyAuth\(headers, url\)/);
+	});
+
+	it("mcp-ts-server omits auth wiring when authWiring is false", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("mcp-ts-server", ir, {
+			name: "Petstore",
+			authWiring: false,
+		});
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		assert.doesNotMatch(generated.content, /process\.env\["API_KEY"\]/);
+		assert.doesNotMatch(generated.content, /X-API-Key/);
+		// The applyAuth function still exists (stub) so the call site stays
+		// stable — the body is a no-op comment.
+		assert.match(generated.content, /No auth schemes declared/);
+	});
+
+	it("mcp-python-server emits the spec's apiKey header + env var by default", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("mcp-python-server", ir, { name: "Petstore" });
+		const py = result.files.find((f) => f.path === "server.py");
+		assert.ok(py);
+		assert.match(py.content, /API_KEY/);
+		assert.match(py.content, /X-API-Key/);
+		assert.match(py.content, /def apply_auth/);
+		// Uses os.environ.get (no KeyError on missing).
+		assert.match(py.content, /os\.environ\.get\("API_KEY"\)/);
+	});
+
+	it("mcp-python-server omits auth wiring when authWiring is false", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("mcp-python-server", ir, {
+			name: "Petstore",
+			authWiring: false,
+		});
+		const py = result.files.find((f) => f.path === "server.py");
+		assert.ok(py);
+		assert.doesNotMatch(py.content, /os\.environ\.get\("API_KEY"\)/);
+		assert.doesNotMatch(py.content, /X-API-Key/);
+	});
+
+	it("a2a wrapper emits the spec's apiKey header + env var by default", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("a2a-wrapper", ir);
+		const src = result.files.find((f) => f.path === "src/index.js");
+		assert.ok(src);
+		assert.match(src.content, /API_KEY/);
+		assert.match(src.content, /X-API-Key/);
+		assert.match(src.content, /applyAuth\(headers, url\)/);
+	});
+
+	it("a2a wrapper omits auth wiring when authWiring is false", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("a2a-wrapper", ir, { authWiring: false });
+		const src = result.files.find((f) => f.path === "src/index.js");
+		assert.ok(src);
+		assert.doesNotMatch(src.content, /process\.env\["API_KEY"\]/);
+		assert.doesNotMatch(src.content, /X-API-Key/);
+	});
+
+	it("plugin-ts targets inherit auth wiring from the mcp-ts-server scaffold", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("claude-code-plugin-ts", ir, {
+			name: "Petstore Plugin",
+		});
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		assert.match(generated.content, /API_KEY/);
+		assert.match(generated.content, /X-API-Key/);
+	});
+
+	it("bearer auth synthesizes Authorization header + BEARER_TOKEN env var", () => {
+		const bearerSpec: RuahToolSchema = {
+			meta: {
+				title: "Bearer API",
+				version: "1.0.0",
+				sourceFormat: "openapi-3.0",
+				sourceFile: "inline.yaml",
+				generatedAt: new Date().toISOString(),
+				baseUrl: "https://example.com",
+			},
+			auth: [
+				{
+					id: "bearerAuth",
+					type: "http",
+					scheme: "bearer",
+				},
+			],
+			types: {},
+			tools: [makeTool("listThings", "GET")],
+		};
+		const result = generate("mcp-ts-server", bearerSpec);
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		assert.match(generated.content, /BEARER_TOKEN/);
+		assert.match(generated.content, /Authorization/);
+		assert.match(generated.content, /Bearer/);
+	});
+
+	it("basic auth synthesizes BASIC_AUTH_USER + BASIC_AUTH_PASS env vars", () => {
+		const basicSpec: RuahToolSchema = {
+			meta: {
+				title: "Basic API",
+				version: "1.0.0",
+				sourceFormat: "openapi-3.0",
+				sourceFile: "inline.yaml",
+				generatedAt: new Date().toISOString(),
+				baseUrl: "https://example.com",
+			},
+			auth: [
+				{
+					id: "basicAuth",
+					type: "http",
+					scheme: "basic",
+				},
+			],
+			types: {},
+			tools: [makeTool("listThings", "GET")],
+		};
+		const result = generate("mcp-ts-server", basicSpec);
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		assert.match(generated.content, /BASIC_AUTH_USER/);
+		assert.match(generated.content, /BASIC_AUTH_PASS/);
+		assert.match(generated.content, /Basic/);
+	});
+
+	it("oauth2 emits a placeholder bearer with OAUTH_TOKEN", () => {
+		const oauthSpec: RuahToolSchema = {
+			meta: {
+				title: "OAuth API",
+				version: "1.0.0",
+				sourceFormat: "openapi-3.0",
+				sourceFile: "inline.yaml",
+				generatedAt: new Date().toISOString(),
+				baseUrl: "https://example.com",
+			},
+			auth: [{ id: "oauth", type: "oauth2" }],
+			types: {},
+			tools: [makeTool("listThings", "GET")],
+		};
+		const result = generate("mcp-ts-server", oauthSpec);
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		assert.match(generated.content, /OAUTH_TOKEN/);
+		assert.match(generated.content, /obtained externally/);
+	});
+
+	it("no auth schemes => no auth code regardless of flag", () => {
+		const noAuthSpec: RuahToolSchema = {
+			meta: {
+				title: "Open API",
+				version: "1.0.0",
+				sourceFormat: "openapi-3.0",
+				sourceFile: "inline.yaml",
+				generatedAt: new Date().toISOString(),
+				baseUrl: "https://example.com",
+			},
+			auth: [],
+			types: {},
+			tools: [makeTool("listThings", "GET")],
+		};
+		for (const authWiring of [true, false, undefined]) {
+			const result = generate("mcp-ts-server", noAuthSpec, { authWiring });
+			const generated = result.files.find((f) => f.path === "src/generated.ts");
+			assert.ok(generated);
+			assert.doesNotMatch(generated.content, /BEARER_TOKEN/);
+			assert.doesNotMatch(generated.content, /process\.env\["API_KEY"\]/);
+			assert.doesNotMatch(generated.content, /OAUTH_TOKEN/);
+		}
+	});
+
+	it("apiKey-in-query injects into url.searchParams (not headers)", () => {
+		const querySpec: RuahToolSchema = {
+			meta: {
+				title: "Query API",
+				version: "1.0.0",
+				sourceFormat: "openapi-3.0",
+				sourceFile: "inline.yaml",
+				generatedAt: new Date().toISOString(),
+				baseUrl: "https://example.com",
+			},
+			auth: [
+				{
+					id: "queryKey",
+					type: "apiKey",
+					in: "query",
+					name: "access_token",
+				},
+			],
+			types: {},
+			tools: [makeTool("listThings", "GET")],
+		};
+		const result = generate("mcp-ts-server", querySpec);
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		assert.match(generated.content, /url\.searchParams\.set\("access_token"/);
+	});
+
+	it("generated TS auth wiring still transpiles under strict mode", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("mcp-ts-server", ir, { name: "Petstore" });
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		const transpiled = ts.transpileModule(generated.content, {
+			compilerOptions: {
+				module: ts.ModuleKind.Node16,
+				target: ts.ScriptTarget.ES2022,
+			},
+			reportDiagnostics: true,
+			fileName: "src/generated.ts",
+		});
+		assert.equal(
+			transpiled.diagnostics?.length ?? 0,
+			0,
+			"generated.ts with auth wiring must transpile cleanly",
+		);
+	});
+});
+
 describe("config loading", () => {
 	it("loads generation defaults from a JSON config file", () => {
 		const dir = mkdtempSync(resolve(tmpdir(), "ruah-conv-config-"));
@@ -577,3 +1063,192 @@ function makeTool(name: string, method: Tool["method"]): Tool {
 					: "moderate",
 	};
 }
+
+describe("identifier safety", () => {
+	const MALICIOUS_TOOL_NAME =
+		"x):\n    import os\n    os.system('pwned')\n    def y(z";
+	const MALICIOUS_BODY_KEY = 'y"; import sys';
+
+	function buildMaliciousSpec(): RuahToolSchema {
+		const tool: Tool = {
+			name: MALICIOUS_TOOL_NAME,
+			description: "malicious",
+			method: "POST",
+			path: "/things",
+			parameters: [],
+			requestBody: {
+				required: true,
+				contentType: "application/json",
+				schema: {
+					kind: "object",
+					properties: {
+						[MALICIOUS_BODY_KEY]: { type: { kind: "string" } },
+						safe_field: { type: { kind: "string" } },
+					},
+					required: [],
+				},
+			},
+			responses: [],
+			idempotent: false,
+			readOnly: false,
+			riskLevel: "moderate",
+		};
+		return buildSpec([tool]);
+	}
+
+	it("Python generator sanitizes tool name and body keys, blocking code injection", () => {
+		const spec = buildMaliciousSpec();
+		const result = generate("mcp-python-server", spec);
+		const server = result.files.find((f) => f.path === "server.py");
+		if (!server) throw new Error("expected server.py");
+		const src = server.content;
+
+		// The decorator line carries the raw name as a JSON-quoted string —
+		// that's fine. We only need to ensure the injected payload never appears
+		// as parseable top-level Python code.
+		const decoratorIdx = src.indexOf("@mcp.tool");
+		assert.ok(decoratorIdx >= 0, "expected decorator block");
+		const codeAfterDecorator = src.slice(decoratorIdx);
+
+		// Strip the JSON-quoted `name=...` and `description=...` so we don't
+		// false-positive on the raw payload that's safely inside a string.
+		const codeWithoutStrings = codeAfterDecorator
+			.replace(/name="[^"]*"/g, "")
+			.replace(/description="[^"]*"/g, "")
+			.replace(/OPERATIONS\["[^"]*"\]/g, "")
+			.replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, '""');
+
+		assert.ok(
+			!codeWithoutStrings.includes("import os"),
+			"sanitizer failed: 'import os' injected into Python source",
+		);
+		assert.ok(
+			!codeWithoutStrings.includes("os.system"),
+			"sanitizer failed: 'os.system' injected into Python source",
+		);
+		assert.ok(
+			!codeWithoutStrings.includes("import sys"),
+			"sanitizer failed: 'import sys' injected into Python source",
+		);
+
+		// And the def line must be a clean identifier.
+		const defMatch = src.match(/async def (\S+?)\(/);
+		if (!defMatch) throw new Error("expected async def line");
+		const defName = defMatch[1];
+		assert.match(
+			defName,
+			/^[A-Za-z_][A-Za-z0-9_]*$/,
+			`def name not a valid Python identifier: ${defName}`,
+		);
+	});
+
+	it("Python generator URL-encodes path params (quote import + usage)", () => {
+		const spec = buildSpec([
+			{
+				name: "get_thing",
+				description: "get",
+				method: "GET",
+				path: "/things/{id}",
+				parameters: [
+					{
+						name: "id",
+						in: "path",
+						required: true,
+						schema: { kind: "string" },
+					},
+				],
+				responses: [],
+				idempotent: true,
+				readOnly: true,
+				riskLevel: "safe",
+			},
+		]);
+		const result = generate("mcp-python-server", spec);
+		const server = result.files.find((f) => f.path === "server.py");
+		if (!server) throw new Error("expected server.py");
+		assert.match(
+			server.content,
+			/from urllib\.parse import quote/,
+			"expected `from urllib.parse import quote` import",
+		);
+		assert.match(
+			server.content,
+			/quote\(str\([^)]+\), safe=""\)/,
+			"expected quote(str(value), safe='') usage in path interpolation",
+		);
+	});
+
+	it("TS generator does not emit injected top-level statements", () => {
+		const spec = buildMaliciousSpec();
+		const result = generate("mcp-ts-server", spec);
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		if (!generated) throw new Error("expected src/generated.ts");
+		const src = generated.content;
+		// The TS generator routes every spec-derived value through JSON.stringify,
+		// so payload text may legitimately appear inside string literals. Strip
+		// string literals first, then assert the payload does not appear as code.
+		const codeWithoutStrings = src
+			.replace(/"(?:[^"\\]|\\.)*"/g, '""')
+			.replace(/'(?:[^'\\]|\\.)*'/g, "''")
+			.replace(/`(?:[^`\\]|\\.)*`/g, "``");
+		assert.ok(
+			!codeWithoutStrings.includes("os.system"),
+			"payload 'os.system' escaped a string literal in TS source",
+		);
+		assert.ok(
+			!codeWithoutStrings.includes("import sys"),
+			"payload 'import sys' escaped a string literal in TS source",
+		);
+		// Parse and confirm the source still tokenizes — a successful parse with
+		// no syntax errors means the malicious key didn't escape its string.
+		const sourceFile = ts.createSourceFile(
+			"generated.ts",
+			src,
+			ts.ScriptTarget.ES2022,
+			true,
+		);
+		const syntacticDiagnostics = (
+			sourceFile as unknown as {
+				parseDiagnostics?: ReadonlyArray<ts.Diagnostic>;
+			}
+		).parseDiagnostics;
+		assert.ok(
+			!syntacticDiagnostics || syntacticDiagnostics.length === 0,
+			"TS generator produced source with parse errors — possible injection",
+		);
+	});
+});
+
+describe("writeGeneratedFiles path traversal guard", () => {
+	it("rejects relative ../ paths", () => {
+		const dir = mkdtempSync(resolve(tmpdir(), "ruah-conv-traversal-"));
+		assert.throws(
+			() =>
+				writeGeneratedFilesGuarded(
+					[{ path: "../escape.txt", content: "x" }],
+					dir,
+				),
+			/Refusing to write outside/,
+		);
+	});
+
+	it("rejects absolute paths outside the output directory", () => {
+		const dir = mkdtempSync(resolve(tmpdir(), "ruah-conv-traversal-"));
+		const escapeTarget = resolve(tmpdir(), "ruah-conv-escape-target.txt");
+		assert.throws(
+			() =>
+				writeGeneratedFilesGuarded([{ path: escapeTarget, content: "x" }], dir),
+			/Refusing to write outside/,
+		);
+	});
+
+	it("accepts nested paths under the output directory", () => {
+		const dir = mkdtempSync(resolve(tmpdir(), "ruah-conv-traversal-"));
+		const written = writeGeneratedFilesGuarded(
+			[{ path: "subdir/file.txt", content: "ok" }],
+			dir,
+		);
+		assert.equal(written.length, 1);
+		assert.ok(written[0].startsWith(resolve(dir)));
+	});
+});

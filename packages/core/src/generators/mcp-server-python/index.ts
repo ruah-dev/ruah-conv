@@ -1,10 +1,24 @@
 import type { RuahToolSchema } from "../../ir/schema.js";
+import type { GeneratorCapability } from "../capability.js";
 import type { GenerateOptions, GenerateResult } from "../index.js";
 import {
+	type AuthWiringPlan,
+	buildAuthWiringPlan,
 	buildOperationSpecs,
 	buildToolDefinitions,
 	buildToolInputSchema,
+	renderAuthEnvVarBanner,
+	renderAuthWiringPython,
+	toSafePythonIdent,
 } from "../shared.js";
+
+export const capability: GeneratorCapability = {
+	id: "mcp-python-server",
+	label: "MCP Python Server",
+	emits: "files",
+	supportsTransport: true,
+	supportsName: true,
+};
 
 export function generate(
 	spec: RuahToolSchema,
@@ -24,6 +38,7 @@ export function generate(
 		};
 	});
 	const tools = buildToolDefinitions(spec);
+	const authPlan = buildAuthWiringPlan(spec.auth, options.authWiring !== false);
 
 	return {
 		files: [
@@ -40,6 +55,7 @@ export function generate(
 					spec.meta.baseUrl,
 					tools,
 					operations,
+					authPlan,
 				),
 			},
 		],
@@ -76,33 +92,53 @@ function buildPythonServer(
 		inputSchema: Record<string, unknown>;
 	}>,
 	operations: Array<Record<string, unknown>>,
+	authPlan: AuthWiringPlan,
 ): string {
 	const decorators = tools
-		.map((tool) => {
+		.map((tool, toolIndex) => {
 			const props =
 				(tool.inputSchema.properties as Record<string, unknown>) ?? {};
 			const required = new Set((tool.inputSchema.required as string[]) ?? []);
-			const args = Object.entries(props)
+			const usedIdents = new Set<string>();
+			const propEntries = Object.entries(props).map(([name, schema], i) => {
+				let safe = toSafePythonIdent(name, `arg_${i}`);
+				// Guarantee uniqueness in case two distinct keys sanitize to the
+				// same Python identifier (e.g. "a.b" and "a-b" both → "a_b").
+				let suffix = 0;
+				while (usedIdents.has(safe)) {
+					suffix += 1;
+					safe = `${toSafePythonIdent(name, `arg_${i}`)}_${suffix}`;
+				}
+				usedIdents.add(safe);
+				return { original: name, safe, schema };
+			});
+			const safeFnName = toSafePythonIdent(tool.name, `op_${toolIndex}`);
+			const args = propEntries
 				.map(
-					([name, schema]) =>
-						`${name}: ${jsonSchemaToPythonType(schema)}${required.has(name) ? "" : " | None = None"}`,
+					(entry) =>
+						`${entry.safe}: ${jsonSchemaToPythonType(entry.schema)}${required.has(entry.original) ? "" : " | None = None"}`,
 				)
 				.join(", ");
+			const payloadEntries = propEntries
+				.map((entry) => `${JSON.stringify(entry.original)}: ${entry.safe}`)
+				.join(", ");
 			return `@mcp.tool(name=${JSON.stringify(tool.name)}, description=${JSON.stringify(tool.description)})
-async def ${tool.name}(${args}) -> str:
-    payload = {${Object.keys(props)
-			.map((name) => `${JSON.stringify(name)}: ${name}`)
-			.join(", ")}}
+async def ${safeFnName}(${args}) -> str:
+    payload = {${payloadEntries}}
     return await invoke_operation(OPERATIONS[${JSON.stringify(tool.name)}], payload)
 `;
 		})
 		.join("\n");
 
-	return `from __future__ import annotations
+	const authBanner = renderAuthEnvVarBanner(authPlan, "#");
+	const authBody = renderAuthWiringPython(authPlan);
+
+	return `${authBanner}from __future__ import annotations
 
 import json
 import os
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -112,10 +148,13 @@ API_BASE_URL = os.environ.get("API_BASE_URL", ${JSON.stringify(baseUrl ?? "http:
 OPERATIONS = ${toPythonLiteral(Object.fromEntries(operations.map((operation) => [operation.name, operation])))}
 
 
+def apply_auth(headers: dict[str, str], params: dict[str, Any]) -> None:
+${authBody}
+
 async def invoke_operation(operation: dict[str, Any], args: dict[str, Any]) -> str:
     url = API_BASE_URL.rstrip("/") + interpolate_path(operation["path"], args)
-    params = {}
-    headers = {}
+    params: dict[str, Any] = {}
+    headers: dict[str, str] = {}
 
     for param in operation["parameters"]:
         value = args.get(param["name"])
@@ -126,10 +165,7 @@ async def invoke_operation(operation: dict[str, Any], args: dict[str, Any]) -> s
         elif param["in"] == "header":
             headers[param["name"]] = str(value)
 
-    if os.environ.get("API_KEY"):
-        headers["x-api-key"] = os.environ["API_KEY"]
-    if os.environ.get("BEARER_TOKEN"):
-        headers["Authorization"] = f"Bearer {os.environ['BEARER_TOKEN']}"
+    apply_auth(headers, params)
 
     body = None
     if operation.get("requestBody"):
@@ -169,9 +205,11 @@ async def invoke_operation(operation: dict[str, Any], args: dict[str, Any]) -> s
 
 
 def interpolate_path(path: str, args: dict[str, Any]) -> str:
+    # quote(..., safe="") percent-encodes "/" and "?" so an attacker-controlled
+    # arg cannot break out of its path segment.
     result = path
     for key, value in args.items():
-        result = result.replace("{" + key + "}", str(value))
+        result = result.replace("{" + key + "}", quote(str(value), safe=""))
     return result
 
 
