@@ -5,7 +5,7 @@
 
 ## Identity
 - Project: @ruah-dev/conv
-- Version: 0.5.0 (published on npm)
+- Version: 0.5.1 (published on npm)
 - Description: TypeScript CLI that converts API specs (OpenAPI 3.0/3.1, Swagger 2.0, Postman v2.1, GraphQL SDL) into agent-ready tool surfaces (MCP TS/Python servers, OpenAI/Anthropic tool defs, A2A wrapper, Claude Code/Codex plugin scaffolds).
 - Structure: npm workspaces. Outer package wraps `packages/core` (the real code). Outer `bin/ruah-conv.js` shells to `packages/core/dist/cli.js`.
 - Runtime: Node >= 18, ESM, TypeScript strict.

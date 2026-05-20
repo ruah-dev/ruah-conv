@@ -1,6 +1,6 @@
 {
 	"name": "@ruah-dev/conv-core",
-	"version": "0.5.0",
+	"version": "0.5.1",
 	"description": "Core implementation for converting API specs (OpenAPI) into agent-ready tool surfaces.",
 	"type": "module",
 	"ruah": {

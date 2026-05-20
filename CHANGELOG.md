@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [0.5.1] - 2026-05-21
+
+### Fixed
+
+- **OpenAPI/Swagger `$ref` parameters** — `convertParameter` and `mergeParameters` treated raw `{$ref: "..."}` objects as already-resolved, producing parameters with empty `name`/`in` and colliding all refs in an operation onto a single empty-string slot. GitHub's spec hit this hundreds of times via its pagination refs (`pagination-before`, `pagination-after`, `direction`). The OpenAPI parser now resolves `#/components/parameters/<name>` (with cycle detection); the Swagger 2.0 parser lifts reusable parameters into `components.parameters` and rewrites `#/parameters/<name>` refs so the same resolver handles both. Unresolvable refs surface as `unresolved-ref` validation warnings and are dropped instead of silently emitting empty-name parameters
+- **Request body encoding for non-JSON content types** — generated `mcp-ts-server`, `mcp-python-server`, and `a2a-wrapper` scaffolds previously emitted `String(payload)` when `flattenedBody` was true and the content type wasn't JSON, producing the literal text `"[object Object]"` as the HTTP body. Every Stripe POST (and any `application/x-www-form-urlencoded` API) failed at runtime. Generators now encode per content type: JSON (including `application/vnd.api+json` variants) via `JSON.stringify`, `application/x-www-form-urlencoded` via `URLSearchParams` with Stripe-style one-level bracket nesting (`metadata[order_id]=foo`), `multipart/form-data` via `FormData` (TS) / `httpx files=` (Python) with the runtime setting `Content-Type` and boundary, unknown types fall back to JSON with a runtime warning. `plugin-ts` inherits the fix transparently
+
+### Changed
+
+- README "What's Shipped" and "Not Yet" sections make the v0.5 scope auditable (concrete capability bullets; explicit gaps for per-operation auth selection, runtime pagination wrappers, retry, dry-run). Roadmap section now lists v0.4, v0.5, and v0.6 (planned)
+
 ## [0.5.0] - 2026-05-21
 
 ### Added
