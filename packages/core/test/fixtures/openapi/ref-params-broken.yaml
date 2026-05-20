@@ -1,0 +1,26 @@
+openapi: "3.0.3"
+info:
+  title: Ref Params Broken API
+  version: "1.0.0"
+servers:
+  - url: https://api.example.com
+
+components:
+  parameters:
+    KnownParam:
+      name: known
+      in: query
+      schema:
+        type: string
+
+paths:
+  /things:
+    get:
+      operationId: listThings
+      summary: List things with a broken parameter ref
+      parameters:
+        - $ref: "#/components/parameters/KnownParam"
+        - $ref: "#/components/parameters/DoesNotExist"
+      responses:
+        "200":
+          description: A list of things.

@@ -1219,6 +1219,155 @@ describe("identifier safety", () => {
 	});
 });
 
+describe("body encoding per content-type", () => {
+	function buildBodySpec(contentType: string): RuahToolSchema {
+		return buildSpec([
+			{
+				name: "submit",
+				description: "submit form",
+				method: "POST",
+				path: "/submit",
+				parameters: [],
+				requestBody: {
+					required: true,
+					contentType,
+					schema: {
+						kind: "object",
+						properties: {
+							amount: { type: { kind: "integer" } },
+							currency: { type: { kind: "string" } },
+						},
+						required: ["amount", "currency"],
+					},
+				},
+				responses: [],
+				idempotent: false,
+				readOnly: false,
+				riskLevel: "moderate",
+			},
+		]);
+	}
+
+	it("mcp-ts-server form-urlencoded uses URLSearchParams, not String(payload)", () => {
+		const result = generate(
+			"mcp-ts-server",
+			buildBodySpec("application/x-www-form-urlencoded"),
+		);
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		assert.match(generated.content, /URLSearchParams/);
+		// The bug we are fixing: the old code did `String((args.body ?? payload))`
+		// which produced "[object Object]" for objects.
+		assert.doesNotMatch(generated.content, /String\(\(args\.body/);
+		// Bracket-style nested encoding for one-level dicts.
+		assert.match(generated.content, /\[\$\{k2\}\]/);
+	});
+
+	it("mcp-ts-server multipart uses FormData and strips content-type", () => {
+		const result = generate(
+			"mcp-ts-server",
+			buildBodySpec("multipart/form-data"),
+		);
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		assert.match(generated.content, /new FormData\(\)/);
+		// Must delete the header so fetch sets it with the boundary.
+		assert.match(generated.content, /delete headers\["content-type"\]/);
+	});
+
+	it("mcp-ts-server application/vnd.api+json is treated as JSON", () => {
+		const result = generate(
+			"mcp-ts-server",
+			buildBodySpec("application/vnd.api+json"),
+		);
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		// The JSON regex must match +json variants.
+		assert.match(
+			generated.content,
+			/\/\^application\\\/\(\[\^;\]\*\\\+\)\?json\(;\|\$\)\//,
+		);
+	});
+
+	it("mcp-ts-server body variable type widens to BodyInit", () => {
+		const result = generate(
+			"mcp-ts-server",
+			buildBodySpec("multipart/form-data"),
+		);
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		assert.match(generated.content, /let body: BodyInit \| undefined/);
+	});
+
+	it("mcp-python-server form-urlencoded uses urlencode, not json.dumps", () => {
+		const result = generate(
+			"mcp-python-server",
+			buildBodySpec("application/x-www-form-urlencoded"),
+		);
+		const server = result.files.find((f) => f.path === "server.py");
+		assert.ok(server);
+		assert.match(server.content, /from urllib\.parse import quote, urlencode/);
+		assert.match(server.content, /urlencode\(items, doseq=True\)/);
+		// Bracketed nested keys (Stripe-style).
+		assert.match(server.content, /f"\{k\}\[\{k2\}\]"/);
+	});
+
+	it("mcp-python-server multipart pops Content-Type so httpx sets boundary", () => {
+		const result = generate(
+			"mcp-python-server",
+			buildBodySpec("multipart/form-data"),
+		);
+		const server = result.files.find((f) => f.path === "server.py");
+		assert.ok(server);
+		assert.match(server.content, /headers\.pop\("Content-Type", None\)/);
+	});
+
+	it("mcp-python-server JSON regex matches +json variants", () => {
+		const result = generate(
+			"mcp-python-server",
+			buildBodySpec("application/vnd.api+json"),
+		);
+		const server = result.files.find((f) => f.path === "server.py");
+		assert.ok(server);
+		assert.match(server.content, /_JSON_CT_RE = re\.compile/);
+		assert.match(server.content, /\[\^;\]\*\\\+/);
+	});
+
+	it("a2a wrapper form-urlencoded uses URLSearchParams, not String(args.body)", () => {
+		const result = generate(
+			"a2a-wrapper",
+			buildBodySpec("application/x-www-form-urlencoded"),
+		);
+		const src = result.files.find((f) => f.path === "src/index.js");
+		assert.ok(src);
+		assert.match(src.content, /URLSearchParams/);
+		assert.doesNotMatch(src.content, /String\(args\.body \?\? ""\)/);
+	});
+
+	it("a2a wrapper multipart deletes content-type", () => {
+		const result = generate(
+			"a2a-wrapper",
+			buildBodySpec("multipart/form-data"),
+		);
+		const src = result.files.find((f) => f.path === "src/index.js");
+		assert.ok(src);
+		assert.match(src.content, /new FormData\(\)/);
+		assert.match(src.content, /delete headers\["content-type"\]/);
+	});
+
+	it("plugin-ts inherits the body-encoding fix from mcp-ts-server", () => {
+		const result = generate(
+			"claude-code-plugin-ts",
+			buildBodySpec("application/x-www-form-urlencoded"),
+			{ name: "Test Plugin" },
+		);
+		const generated = result.files.find((f) => f.path === "src/generated.ts");
+		assert.ok(generated);
+		assert.match(generated.content, /URLSearchParams/);
+		assert.doesNotMatch(generated.content, /String\(\(args\.body/);
+	});
+});
+
 describe("writeGeneratedFiles path traversal guard", () => {
 	it("rejects relative ../ paths", () => {
 		const dir = mkdtempSync(resolve(tmpdir(), "ruah-conv-traversal-"));

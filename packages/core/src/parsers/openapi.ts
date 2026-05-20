@@ -12,6 +12,7 @@ import type {
 	SourceFormat,
 	Tool,
 	TypeDefinition,
+	ValidationWarning,
 } from "../ir/schema.js";
 import {
 	deduplicateNames,
@@ -30,9 +31,14 @@ export function parseOpenAPI(
 	const meta = extractMeta(filePath, doc, version);
 	const auth = extractAuth(doc);
 	const types = extractTypes(doc);
-	const tools = extractTools(doc, auth, types);
+	const parserWarnings: ValidationWarning[] = [];
+	const tools = extractTools(doc, auth, types, parserWarnings);
 
-	return { meta, auth, tools, types };
+	const result: RuahToolSchema = { meta, auth, tools, types };
+	if (parserWarnings.length > 0) {
+		result.parserWarnings = parserWarnings;
+	}
+	return result;
 }
 
 // ── Version detection ────────────────────────────────────────────────
@@ -146,14 +152,23 @@ function extractTools(
 	doc: Record<string, unknown>,
 	auth: AuthSchema[],
 	_types: Record<string, TypeDefinition>,
+	parserWarnings: ValidationWarning[],
 ): Tool[] {
 	const paths = (doc.paths as Record<string, Record<string, unknown>>) ?? {};
 	const tools: Tool[] = [];
 	const names: string[] = [];
 
 	for (const [path, pathItem] of Object.entries(paths)) {
-		const pathParams =
+		const rawPathParams =
 			(pathItem.parameters as Array<Record<string, unknown>>) ?? [];
+		// Resolve path-level params once per path so unresolved-ref warnings on
+		// shared parameters aren't duplicated across every HTTP method.
+		const pathParams = resolveParamList(
+			rawPathParams,
+			doc,
+			`paths.${path}.parameters`,
+			parserWarnings,
+		);
 
 		for (const method of HTTP_METHODS) {
 			const operation = pathItem[method.toLowerCase()] as
@@ -161,9 +176,8 @@ function extractTools(
 				| undefined;
 			if (!operation) continue;
 
-			const opParams =
+			const rawOpParams =
 				(operation.parameters as Array<Record<string, unknown>>) ?? [];
-			const mergedParams = mergeParameters(pathParams, opParams);
 
 			const operationId = operation.operationId
 				? String(operation.operationId)
@@ -173,11 +187,28 @@ function extractTools(
 				: synthesizeToolName(method, path);
 			names.push(rawName);
 
+			const warnPathBase = `paths.${path}.${method.toLowerCase()}`;
+			const opParams = resolveParamList(
+				rawOpParams,
+				doc,
+				`${warnPathBase}.parameters`,
+				parserWarnings,
+			);
+			const mergedParams = mergeParameters(pathParams, opParams);
+
 			const description = String(
 				operation.summary ?? operation.description ?? `${method} ${path}`,
 			);
 
-			const parameters = mergedParams.map(convertParameter);
+			const parameters = mergedParams
+				.map((p, idx) =>
+					convertParameter(
+						p,
+						`${warnPathBase}.parameters[${idx}]`,
+						parserWarnings,
+					),
+				)
+				.filter((p): p is Parameter => p !== null);
 			const requestBody = operation.requestBody
 				? convertRequestBody(operation.requestBody as Record<string, unknown>)
 				: undefined;
@@ -220,28 +251,131 @@ function extractTools(
 
 // ── Parameter handling ───────────────────────────────────────────────
 
+/**
+ * Resolve a single parameter object that may be either an inline definition
+ * or a `$ref` into `#/components/parameters/<name>`. Returns `null` when the
+ * reference cannot be resolved and pushes an `unresolved-ref` warning so the
+ * caller can drop the parameter rather than emit an empty-name placeholder.
+ *
+ * Visited refs are tracked to break accidental cycles (legal-but-rare).
+ */
+function resolveParam(
+	param: Record<string, unknown>,
+	doc: Record<string, unknown>,
+	warnPath: string,
+	warnings: ValidationWarning[],
+	visited: Set<string> = new Set(),
+): Record<string, unknown> | null {
+	if (typeof param.$ref !== "string") return param;
+
+	const ref = param.$ref;
+	if (visited.has(ref)) {
+		warnings.push({
+			path: warnPath,
+			code: "unresolved-ref",
+			message: `Parameter $ref "${ref}" is part of a cycle — dropped.`,
+		});
+		return null;
+	}
+	visited.add(ref);
+
+	// Only support local refs into components/parameters. External refs are
+	// out of scope; surface a warning and drop the parameter.
+	const localPrefix = "#/components/parameters/";
+	if (!ref.startsWith(localPrefix)) {
+		warnings.push({
+			path: warnPath,
+			code: "unresolved-ref",
+			message: `Parameter $ref "${ref}" is not a local components/parameters ref — dropped.`,
+		});
+		return null;
+	}
+
+	const refName = ref.slice(localPrefix.length);
+	const components = (doc.components as Record<string, unknown>) ?? {};
+	const params =
+		(components.parameters as Record<string, Record<string, unknown>>) ??
+		undefined;
+	const resolved = params?.[refName];
+	if (!resolved) {
+		warnings.push({
+			path: warnPath,
+			code: "unresolved-ref",
+			message: `Parameter $ref "${ref}" could not be resolved — dropped.`,
+		});
+		return null;
+	}
+
+	// Recurse in case the target is itself a $ref.
+	return resolveParam(resolved, doc, warnPath, warnings, visited);
+}
+
+function resolveParamList(
+	params: Array<Record<string, unknown>>,
+	doc: Record<string, unknown>,
+	warnPathBase: string,
+	warnings: ValidationWarning[],
+): Array<Record<string, unknown>> {
+	const out: Array<Record<string, unknown>> = [];
+	for (let i = 0; i < params.length; i++) {
+		const resolved = resolveParam(
+			params[i],
+			doc,
+			`${warnPathBase}[${i}]`,
+			warnings,
+		);
+		if (resolved) out.push(resolved);
+	}
+	return out;
+}
+
 function mergeParameters(
 	pathParams: Array<Record<string, unknown>>,
 	opParams: Array<Record<string, unknown>>,
 ): Array<Record<string, unknown>> {
-	// Operation-level params override path-level by name+in
+	// Operation-level params override path-level by name+in. Parameters that
+	// lack a name (broken spec) are kept positionally under a synthetic key so
+	// they do not collide with each other or with named entries.
 	const merged = new Map<string, Record<string, unknown>>();
+	let anonCounter = 0;
 
-	for (const p of pathParams) {
-		const key = `${p.name}:${p.in}`;
+	const add = (p: Record<string, unknown>): void => {
+		const name = typeof p.name === "string" ? p.name : "";
+		const where = typeof p.in === "string" ? p.in : "";
+		const key = name ? `${name}:${where}` : `__anon_${anonCounter++}__`;
 		merged.set(key, p);
-	}
-	for (const p of opParams) {
-		const key = `${p.name}:${p.in}`;
-		merged.set(key, p);
-	}
+	};
+
+	for (const p of pathParams) add(p);
+	for (const p of opParams) add(p);
 
 	return [...merged.values()];
 }
 
-function convertParameter(param: Record<string, unknown>): Parameter {
+/**
+ * Convert a resolved parameter object into the IR. Returns `null` (and pushes
+ * a warning) when the parameter is structurally broken — e.g. has no name
+ * after resolution — so the caller can drop it instead of emitting a silent
+ * empty-name entry that would later collide in lookup maps.
+ */
+function convertParameter(
+	param: Record<string, unknown>,
+	warnPath: string,
+	warnings: ValidationWarning[],
+): Parameter | null {
+	const name = typeof param.name === "string" ? param.name : "";
+	if (!name) {
+		warnings.push({
+			path: warnPath,
+			code: "unresolved-ref",
+			message:
+				"Parameter has no name after resolution — dropped (likely a broken or unresolved $ref).",
+		});
+		return null;
+	}
+
 	return {
-		name: String(param.name ?? ""),
+		name,
 		in: String(param.in ?? "query") as Parameter["in"],
 		required: param.required === true,
 		description: param.description ? String(param.description) : undefined,

@@ -23,6 +23,28 @@ Feed it an OpenAPI spec, get MCP tool definitions, function-calling schemas, hos
 
 **Now shipped:** OpenAPI 3.x, Swagger 2.0, Postman v2.1, GraphQL SDL, and HAR capture inputs; MCP JSON defs; MCP TypeScript/Python scaffolds; OpenAI and Anthropic tool schemas; Claude Code and Codex plugin scaffolds; A2A wrapper scaffold; config-file support.
 
+## What's Shipped
+
+Concrete capabilities you can verify against the current release:
+
+- **Risk classification** — every tool gets `safe`, `moderate`, or `destructive` based on HTTP method
+- **Operation profiles** — `read-only`, `standard`, and `all` presets for OpenAPI/Swagger inputs
+- **Multi-format input** — OpenAPI 3.0/3.1, Swagger 2.0, Postman v2.1, GraphQL SDL, HAR captures
+- **Multi-target output** — TypeScript and Python MCP servers, Claude Code and Codex plugin scaffolds, OpenAI and Anthropic tool definitions, A2A wrapper
+- **Auth scaffolding** — `securitySchemes` from the spec are extracted into the IR and wired into generated scaffolds via env vars (header, query, bearer, basic, oauth2 placeholder)
+- **Pagination detection** — common patterns (`limit`/`offset`, page-number/page-size, cursor) are detected and annotated in tool descriptions
+- **Clean TypeScript output** — generated scaffolds compile against real-world specs (Stripe, GitHub) without manual fix-up
+- **Single runtime dependency** — `yaml` only
+
+## Not Yet
+
+Honest about the gaps so you know what to build on top:
+
+- **Per-operation auth selection** — the IR extracts `securitySchemes` and the generator wires env-var-based injection, but `operation.security` is not yet honored. Generated `applyAuth` attempts every declared scheme on every request. Planned for v0.6.
+- **Pagination runtime wrapper** — pagination is detected and annotated, but generated scaffolds do not auto-page. Consumers handle the next-page call themselves.
+- **Retry / backoff** — not generated. Wrap calls with your own retry policy.
+- **Dry-run mode** — no `--dry-run` flag. Generation always writes (or emits to stdout when `--output` is omitted).
+
 ## See It
 
 <p align="center">
@@ -330,6 +352,23 @@ If `operationProfile` is omitted, interactive OpenAPI/Swagger runs prompt for a 
 - [x] A2A service wrapper
 - [x] Config file support
 - [x] Claude Code and Codex plugin bundle targets
+
+### v0.4 — Real-world hardening
+- [x] HAR capture input
+- [x] Schema-driven auth wiring in scaffolds (`applyAuth` from `securitySchemes`)
+- [x] Pagination detection and annotation in tool descriptions
+- [x] `--no-auth-wiring` opt-out
+
+### v0.5 — Operation profile + scaffold integrity
+- [x] `--operation-profile` flag and interactive preset prompt (`read-only` / `standard` / `all`)
+- [x] Scaffold-output integrity guarantees (every target writes files to `--output`)
+- [x] Generated TypeScript compiles cleanly on Stripe- and GitHub-scale specs
+
+### v0.6 — Planned
+- [ ] Per-operation auth selection (honor `operation.security`)
+- [ ] Runtime pagination wrapper in generated scaffolds
+- [ ] Retry / backoff helper in generated scaffolds
+- [ ] `--dry-run` mode
 
 ## Install
 

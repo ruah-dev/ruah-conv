@@ -1,0 +1,47 @@
+openapi: "3.0.3"
+info:
+  title: Ref Params API
+  version: "1.0.0"
+  description: Reproduces the GitHub-style pattern of operation parameters that are $refs into components/parameters.
+servers:
+  - url: https://api.example.com
+
+components:
+  parameters:
+    PaginationBefore:
+      name: pagination-before
+      in: query
+      required: false
+      description: Cursor for the previous page.
+      schema:
+        type: string
+    PaginationAfter:
+      name: pagination-after
+      in: query
+      required: false
+      description: Cursor for the next page.
+      schema:
+        type: string
+    Direction:
+      name: direction
+      in: query
+      required: false
+      description: Sort direction.
+      schema:
+        type: string
+        enum:
+          - asc
+          - desc
+
+paths:
+  /things:
+    get:
+      operationId: listThings
+      summary: List things
+      parameters:
+        - $ref: "#/components/parameters/PaginationBefore"
+        - $ref: "#/components/parameters/PaginationAfter"
+        - $ref: "#/components/parameters/Direction"
+      responses:
+        "200":
+          description: A list of things.

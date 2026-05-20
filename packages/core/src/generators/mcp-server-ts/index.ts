@@ -211,9 +211,9 @@ async function invokeOperation(
 
   applyAuth(headers, url);
 
-  let body: string | undefined;
+  let body: BodyInit | undefined;
   if (operation.requestBody) {
-    headers["content-type"] = operation.requestBody.contentType;
+    const ct = operation.requestBody.contentType;
     if (operation.flattenedBody) {
       const payload: Record<string, unknown> = {};
       for (const key of Object.keys(args)) {
@@ -221,10 +221,9 @@ async function invokeOperation(
           payload[key] = args[key];
         }
       }
-      body = operation.requestBody.contentType.startsWith("application/json")
-        ? JSON.stringify(payload)
-        : String((args.body ?? payload) as string);
+      body = encodeRequestBody(ct, payload, headers);
     } else if (args.body !== undefined) {
+      headers["content-type"] = ct;
       body =
         typeof args.body === "string"
           ? args.body
@@ -270,6 +269,66 @@ async function invokeOperation(
         ? (data as { [key: string]: unknown })
         : undefined,
   };
+}
+
+function encodeRequestBody(
+  contentType: string,
+  payload: Record<string, unknown>,
+  headers: Record<string, string>,
+): BodyInit | undefined {
+  if (/^application\\/([^;]*\\+)?json(;|$)/.test(contentType)) {
+    headers["content-type"] = contentType;
+    return JSON.stringify(payload);
+  }
+  if (contentType.startsWith("application/x-www-form-urlencoded")) {
+    headers["content-type"] = contentType;
+    const usp = new URLSearchParams();
+    for (const [k, v] of Object.entries(payload)) {
+      if (v === undefined || v === null) continue;
+      if (Array.isArray(v)) {
+        for (const item of v) usp.append(k, String(item));
+      } else if (typeof v === "object") {
+        // One-level bracketed encoding (Stripe-style: metadata[order_id]=foo).
+        for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) {
+          if (v2 === undefined || v2 === null) continue;
+          usp.append(\`\${k}[\${k2}]\`, String(v2));
+        }
+      } else {
+        usp.append(k, String(v));
+      }
+    }
+    return usp.toString();
+  }
+  if (contentType.startsWith("multipart/form-data")) {
+    // Let fetch set Content-Type with the boundary; do not set it explicitly.
+    delete headers["content-type"];
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(payload)) {
+      if (v === undefined || v === null) continue;
+      if (Array.isArray(v)) {
+        for (const item of v) fd.append(k, item as string | Blob);
+      } else if (typeof v === "object" && !(v instanceof Blob)) {
+        fd.append(k, JSON.stringify(v));
+      } else {
+        fd.append(k, v as string | Blob);
+      }
+    }
+    return fd;
+  }
+  if (contentType.startsWith("text/")) {
+    headers["content-type"] = contentType;
+    // Flattened bodies always come in as objects. Serialize as JSON with a warn
+    // — callers wanting raw text should use a non-flattened body parameter.
+    console.warn(
+      \`[invokeOperation] text/* content-type with flattened object payload; serializing as JSON.\`,
+    );
+    return JSON.stringify(payload);
+  }
+  headers["content-type"] = contentType;
+  console.warn(
+    \`[invokeOperation] Unknown content-type '\${contentType}', falling back to JSON.stringify.\`,
+  );
+  return JSON.stringify(payload);
 }
 
 function interpolatePath(pathname: string, args: Record<string, unknown>) {

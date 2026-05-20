@@ -137,8 +137,10 @@ async def ${safeFnName}(${args}) -> str:
 
 import json
 import os
+import re
+import sys
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -150,6 +152,72 @@ OPERATIONS = ${toPythonLiteral(Object.fromEntries(operations.map((operation) => 
 
 def apply_auth(headers: dict[str, str], params: dict[str, Any]) -> None:
 ${authBody}
+
+_JSON_CT_RE = re.compile(r"^application/([^;]*\\+)?json(;|$)")
+
+
+def encode_request_body(
+    content_type: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+) -> tuple[Any, Any, Any, Any]:
+    """Encode \`payload\` according to \`content_type\`.
+
+    Returns a tuple of (json_body, content_body, files_body, data_body)
+    matching httpx.AsyncClient.request kwargs. Exactly one (or none) is
+    non-None.
+    """
+    if _JSON_CT_RE.match(content_type):
+        headers["Content-Type"] = content_type
+        return payload, None, None, None
+    if content_type.startswith("application/x-www-form-urlencoded"):
+        headers["Content-Type"] = content_type
+        items: list[tuple[str, str]] = []
+        for k, v in payload.items():
+            if v is None:
+                continue
+            if isinstance(v, dict):
+                # One-level bracketed encoding (Stripe-style: metadata[order_id]=foo).
+                for k2, v2 in v.items():
+                    if v2 is None:
+                        continue
+                    items.append((f"{k}[{k2}]", str(v2)))
+            elif isinstance(v, (list, tuple)):
+                for item in v:
+                    if item is None:
+                        continue
+                    items.append((k, str(item)))
+            else:
+                items.append((k, str(v)))
+        return None, urlencode(items, doseq=True), None, None
+    if content_type.startswith("multipart/form-data"):
+        # Let httpx set Content-Type with the boundary.
+        headers.pop("Content-Type", None)
+        files: list[tuple[str, Any]] = []
+        for k, v in payload.items():
+            if v is None:
+                continue
+            if isinstance(v, (dict, list)):
+                files.append((k, (None, json.dumps(v), "application/json")))
+            elif isinstance(v, (bytes, bytearray)):
+                files.append((k, (k, bytes(v), "application/octet-stream")))
+            else:
+                files.append((k, (None, str(v))))
+        return None, None, files, None
+    if content_type.startswith("text/"):
+        headers["Content-Type"] = content_type
+        print(
+            "[invoke_operation] text/* content-type with flattened object payload; serializing as JSON.",
+            file=sys.stderr,
+        )
+        return None, json.dumps(payload), None, None
+    headers["Content-Type"] = content_type
+    print(
+        f"[invoke_operation] Unknown content-type '{content_type}', falling back to JSON.",
+        file=sys.stderr,
+    )
+    return None, json.dumps(payload), None, None
+
 
 async def invoke_operation(operation: dict[str, Any], args: dict[str, Any]) -> str:
     url = API_BASE_URL.rstrip("/") + interpolate_path(operation["path"], args)
@@ -167,17 +235,26 @@ async def invoke_operation(operation: dict[str, Any], args: dict[str, Any]) -> s
 
     apply_auth(headers, params)
 
-    body = None
+    json_body: Any = None
+    content_body: Any = None
+    files_body: Any = None
+    data_body: Any = None
     if operation.get("requestBody"):
-        headers["Content-Type"] = operation["requestBody"]["contentType"]
+        ct = operation["requestBody"]["contentType"]
         if operation.get("flattenedBody"):
-            body = {
+            payload = {
                 key: value
                 for key, value in args.items()
                 if key not in {param["name"] for param in operation["parameters"]} and value is not None
             }
+            json_body, content_body, files_body, data_body = encode_request_body(ct, payload, headers)
         elif args.get("body") is not None:
-            body = args["body"]
+            headers["Content-Type"] = ct
+            value = args["body"]
+            if isinstance(value, (dict, list)):
+                json_body = value
+            else:
+                content_body = value if isinstance(value, (str, bytes)) else str(value)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.request(
@@ -185,8 +262,10 @@ async def invoke_operation(operation: dict[str, Any], args: dict[str, Any]) -> s
             url,
             params=params,
             headers=headers,
-            json=body if headers.get("Content-Type", "").startswith("application/json") else None,
-            content=body if isinstance(body, str) else None,
+            json=json_body,
+            content=content_body,
+            data=data_body,
+            files=files_body,
         )
 
     try:

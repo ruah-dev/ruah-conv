@@ -45,6 +45,20 @@ const HAR_SAMPLE = resolve(
 	"har",
 	"sample.har",
 );
+const OPENAPI_REF_PARAMS = resolve(
+	PROJECT_ROOT,
+	"test",
+	"fixtures",
+	"openapi",
+	"ref-params.yaml",
+);
+const OPENAPI_REF_PARAMS_BROKEN = resolve(
+	PROJECT_ROOT,
+	"test",
+	"fixtures",
+	"openapi",
+	"ref-params-broken.yaml",
+);
 
 describe("detectFormat", () => {
 	it("detects OpenAPI 3.0", () => {
@@ -334,6 +348,57 @@ describe("parse GraphQL error paths", () => {
 	});
 });
 
+describe("parse OpenAPI $ref parameters", () => {
+	it("resolves operation-level $ref parameters into distinct entries", () => {
+		const ir = parse(OPENAPI_REF_PARAMS);
+		const tool = mustFindTool(ir, "listThings");
+
+		// All three GitHub-style pagination refs must surface as distinct params,
+		// not collapse into a single empty-name slot (the v0.5.0 regression).
+		assert.equal(tool.parameters.length, 3);
+
+		const names = tool.parameters.map((p) => p.name).sort();
+		assert.deepEqual(names, [
+			"direction",
+			"pagination-after",
+			"pagination-before",
+		]);
+
+		for (const param of tool.parameters) {
+			assert.notEqual(param.name, "", "parameter name must not be empty");
+			assert.notEqual(
+				param.schema.kind,
+				"unknown",
+				`schema for "${param.name}" should be resolved, not unknown`,
+			);
+			assert.equal(param.in, "query");
+		}
+
+		const direction = mustFindParameter(tool, "direction");
+		assert.equal(direction.schema.kind, "enum");
+		if (direction.schema.kind === "enum") {
+			assert.deepEqual(direction.schema.values, ["asc", "desc"]);
+		}
+	});
+
+	it("drops unresolvable parameter $refs and surfaces a warning", () => {
+		const ir = parse(OPENAPI_REF_PARAMS_BROKEN);
+		const tool = mustFindTool(ir, "listThings");
+
+		// Only the resolvable ref should make it through; the dangling ref is
+		// dropped (no silent empty-name parameter).
+		assert.equal(tool.parameters.length, 1);
+		assert.equal(tool.parameters[0].name, "known");
+
+		const warnings = validateIR(ir);
+		const unresolved = warnings.filter((w) => w.code === "unresolved-ref");
+		assert.ok(
+			unresolved.some((w) => w.message.includes("DoesNotExist")),
+			"expected unresolved-ref warning citing DoesNotExist",
+		);
+	});
+});
+
 describe("parse swagger 2.0", () => {
 	it("auto-upgrades Swagger 2.0 into the shared IR", () => {
 		const ir = parse(SWAGGER);
@@ -344,6 +409,28 @@ describe("parse swagger 2.0", () => {
 		assert.equal(ir.tools.length, 1);
 		assert.equal(ir.tools[0].name, "listItems");
 		assert.equal(ir.tools[0].pagination?.style, "offset-limit");
+	});
+
+	it("resolves Swagger 2.0 $ref parameters via #/parameters/<name>", () => {
+		const fixture = resolve(
+			PROJECT_ROOT,
+			"test",
+			"fixtures",
+			"swagger",
+			"ref-params.json",
+		);
+		const ir = parse(fixture);
+		const tool = mustFindTool(ir, "listThings");
+
+		// Both reusable parameters should resolve into distinct, named entries.
+		assert.equal(tool.parameters.length, 2);
+		const names = tool.parameters.map((p) => p.name).sort();
+		assert.deepEqual(names, ["limit", "offset"]);
+
+		for (const param of tool.parameters) {
+			assert.notEqual(param.name, "");
+			assert.notEqual(param.schema.kind, "unknown");
+		}
 	});
 });
 

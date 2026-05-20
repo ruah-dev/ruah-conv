@@ -31,11 +31,45 @@ function upgradeSwaggerToOpenAPI(
 		components: {
 			schemas:
 				(doc.definitions as Record<string, Record<string, unknown>>) ?? {},
+			// Swagger 2.0 stores reusable parameters under `#/parameters/<Name>`;
+			// OpenAPI 3 expects `#/components/parameters/<Name>`. Lift them so the
+			// OpenAPI parser can resolve $ref parameters emitted by upgradePaths.
+			parameters: upgradeReusableParameters(
+				doc.parameters as Record<string, Record<string, unknown>> | undefined,
+			),
 			securitySchemes: upgradeSecuritySchemes(
 				doc.securityDefinitions as Record<string, Record<string, unknown>>,
 			),
 		},
 	};
+}
+
+function upgradeReusableParameters(
+	parameters: Record<string, Record<string, unknown>> | undefined,
+): Record<string, Record<string, unknown>> {
+	const result: Record<string, Record<string, unknown>> = {};
+	for (const [name, param] of Object.entries(parameters ?? {})) {
+		// Don't upgrade body/formData reusables — those become request bodies in
+		// OpenAPI 3 and aren't valid parameter entries.
+		const where = String(param.in ?? "");
+		if (where === "body" || where === "formData") continue;
+		result[name] = upgradeParameter(param);
+	}
+	return result;
+}
+
+function rewriteParameterRef(
+	param: Record<string, unknown>,
+): Record<string, unknown> {
+	const ref = param.$ref;
+	if (typeof ref !== "string") return param;
+	// Swagger ref → OpenAPI 3 ref. Leave unknown shapes alone.
+	if (ref.startsWith("#/parameters/")) {
+		return {
+			$ref: `#/components/parameters/${ref.slice("#/parameters/".length)}`,
+		};
+	}
+	return param;
 }
 
 function buildServers(doc: Record<string, unknown>): Array<{ url: string }> {
@@ -87,7 +121,9 @@ function upgradePaths(
 		const nextPathItem: Record<string, unknown> = {};
 
 		if (Array.isArray(pathItem.parameters)) {
-			nextPathItem.parameters = pathItem.parameters;
+			nextPathItem.parameters = (
+				pathItem.parameters as Array<Record<string, unknown>>
+			).map(rewriteParameterRef);
 		}
 
 		for (const [method, operationValue] of Object.entries(pathItem)) {
@@ -118,8 +154,17 @@ function upgradeOperation(
 
 	const requestBody = buildRequestBody(parameters, consumes);
 	const openApiParameters = parameters
-		.filter((param) => !["body", "formData"].includes(String(param.in ?? "")))
-		.map((param) => upgradeParameter(param));
+		.filter((param) => {
+			// $ref entries always pass through — body/formData reusables are
+			// dropped at the reusable-parameter level via upgradeReusableParameters.
+			if (typeof param.$ref === "string") return true;
+			return !["body", "formData"].includes(String(param.in ?? ""));
+		})
+		.map((param) =>
+			typeof param.$ref === "string"
+				? rewriteParameterRef(param)
+				: upgradeParameter(param),
+		);
 
 	return {
 		...operation,

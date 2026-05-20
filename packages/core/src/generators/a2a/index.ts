@@ -166,7 +166,7 @@ async function invokeOperation(operation, args) {
 
   let body;
   if (operation.requestBody) {
-    headers["content-type"] = operation.requestBody.contentType;
+    const ct = operation.requestBody.contentType;
     if (operation.flattenedBody) {
       const payload = {};
       for (const [key, value] of Object.entries(args)) {
@@ -174,10 +174,9 @@ async function invokeOperation(operation, args) {
           payload[key] = value;
         }
       }
-      body = operation.requestBody.contentType.startsWith("application/json")
-        ? JSON.stringify(payload)
-        : String(args.body ?? "");
+      body = encodeRequestBody(ct, payload, headers);
     } else {
+      headers["content-type"] = ct;
       body = typeof args.body === "string" ? args.body : JSON.stringify(args.body ?? args);
     }
   }
@@ -189,6 +188,54 @@ async function invokeOperation(operation, args) {
   } catch {
     return text;
   }
+}
+
+function encodeRequestBody(contentType, payload, headers) {
+  if (/^application\\/([^;]*\\+)?json(;|$)/.test(contentType)) {
+    headers["content-type"] = contentType;
+    return JSON.stringify(payload);
+  }
+  if (contentType.startsWith("application/x-www-form-urlencoded")) {
+    headers["content-type"] = contentType;
+    const usp = new URLSearchParams();
+    for (const [k, v] of Object.entries(payload)) {
+      if (v === undefined || v === null) continue;
+      if (Array.isArray(v)) {
+        for (const item of v) usp.append(k, String(item));
+      } else if (typeof v === "object") {
+        for (const [k2, v2] of Object.entries(v)) {
+          if (v2 === undefined || v2 === null) continue;
+          usp.append(\`\${k}[\${k2}]\`, String(v2));
+        }
+      } else {
+        usp.append(k, String(v));
+      }
+    }
+    return usp.toString();
+  }
+  if (contentType.startsWith("multipart/form-data")) {
+    delete headers["content-type"];
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(payload)) {
+      if (v === undefined || v === null) continue;
+      if (Array.isArray(v)) {
+        for (const item of v) fd.append(k, item);
+      } else if (typeof v === "object" && !(v instanceof Blob)) {
+        fd.append(k, JSON.stringify(v));
+      } else {
+        fd.append(k, v);
+      }
+    }
+    return fd;
+  }
+  if (contentType.startsWith("text/")) {
+    headers["content-type"] = contentType;
+    console.warn(\`[invokeOperation] text/* with flattened object payload; serializing as JSON.\`);
+    return JSON.stringify(payload);
+  }
+  headers["content-type"] = contentType;
+  console.warn(\`[invokeOperation] Unknown content-type '\${contentType}', falling back to JSON.stringify.\`);
+  return JSON.stringify(payload);
 }
 
 function interpolatePath(pathname, args) {
