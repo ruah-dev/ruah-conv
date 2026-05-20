@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Generator capability descriptors with flag validation
+- Semantic-correctness assertions in generator tests
+- Parser error-path test coverage
+- `unsupported-graphql-type` IR validation warning
+- Auth-wiring documentation in README
+
+### Changed
+
+- Unified trivial generators (openai-tools, anthropic-tools, mcp-tool-defs) behind a shared factory
+- Parser failures now wrap underlying errors in `SpecParseError` with file path and format context
+
 ## [0.4.0] - 2026-05-15
 
 ### Added

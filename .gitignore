@@ -9,3 +9,6 @@ dist-test/
 .claude/.tmp/
 .claude/.gates-passed
 .claude/.last-audit
+.claude/.circuit-state
+.claude/worktrees/
+tests-specs/

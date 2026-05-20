@@ -25,9 +25,11 @@
 		"build": "npm run build --prefix packages/core",
 		"postinstall": "node postinstall.mjs",
 		"test": "node --test test/*.test.mjs && npm run test --prefix packages/core",
+		"test:postinstall": "node --test test/postinstall.test.mjs",
 		"typecheck": "npm run typecheck --prefix packages/core",
 		"lint": "biome check . --config-path ./biome.json && npm run lint --prefix packages/core",
 		"format": "biome check --write . --config-path ./biome.json",
+		"prepare-release": "node scripts/prepare-release.mjs",
 		"prepublishOnly": "npm run typecheck && npm run lint && npm test && npm run build"
 	},
 	"keywords": [

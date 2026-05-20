@@ -179,6 +179,15 @@ git push --tags
 
 GitHub Actions handles: typecheck → lint → test → npm publish → GitHub Release.
 
+## Working with Claude Code agents
+
+If you use Claude Code, this repo ships with a few task-scoped agent prompts under `.claude/agents/`. They're a good place to start when you're picking up a contribution in an unfamiliar area:
+
+- [`.claude/agents/parser-author.md`](.claude/agents/parser-author.md) — context and conventions for writing a new input parser (registry, IR mapping, fixtures, tests).
+- [`.claude/agents/generator-target-author.md`](.claude/agents/generator-target-author.md) — context and conventions for adding a new output generator target (file emission, capability descriptor, scaffold integrity rule).
+
+These agents encode the same rules as `.claude/governance.md` and this CONTRIBUTING guide. Read them as onboarding docs even if you're not using Claude Code — they're shorter than the full source and point at the right files.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).

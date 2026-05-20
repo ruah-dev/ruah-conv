@@ -15,13 +15,13 @@ Feed it an OpenAPI spec, get MCP tool definitions, function-calling schemas, hos
  Swagger 2.0  ──┤                            ├── MCP Server (TS) ✓
  Postman v2.1 ──┼──→  Ruah Tool Schema  ───┼── MCP Server (Python) ✓
  GraphQL SDL  ──┤     (canonical IR)         ├── Function Calling (OpenAI) ✓
- HAR files    ──┘                            ├── Function Calling (Anthropic) ✓
+ HAR captures ──┘                            ├── Function Calling (Anthropic) ✓
                                              ├── Claude Code plugin bundle ✓
                                              ├── Codex plugin bundle ✓
                                              └── A2A service wrapper ✓
 ```
 
-**Now shipped:** OpenAPI 3.x, Swagger 2.0, Postman v2.1, and GraphQL SDL inputs; MCP JSON defs; MCP TypeScript/Python scaffolds; OpenAI and Anthropic tool schemas; Claude Code and Codex plugin scaffolds; A2A wrapper scaffold; config-file support.
+**Now shipped:** OpenAPI 3.x, Swagger 2.0, Postman v2.1, GraphQL SDL, and HAR capture inputs; MCP JSON defs; MCP TypeScript/Python scaffolds; OpenAI and Anthropic tool schemas; Claude Code and Codex plugin scaffolds; A2A wrapper scaffold; config-file support.
 
 ## See It
 
@@ -211,6 +211,26 @@ Every tool gets a risk level based on HTTP method:
 | PATCH | `destructive` | No | No |
 | DELETE | `destructive` | Yes | No |
 
+## Generated Auth Wiring
+
+Scaffold targets (`mcp-ts-server`, `mcp-python-server`, `a2a-wrapper`, `claude-code-plugin-ts`, `codex-plugin-ts`) read the spec's `securitySchemes` and emit a schema-driven `applyAuth` that injects the correct headers or query parameters at request time. The generated code uses the header/query names declared in the spec — no manual edits required for the common cases.
+
+Set these environment variables before launching the server:
+
+| Scheme in spec | Env var(s) | What gets injected |
+|---|---|---|
+| `apiKey` (header) | `API_KEY` | Header named per spec (e.g. `X-API-Key`) |
+| `apiKey` (query) | `API_KEY` | Query param named per spec |
+| `http` / `bearer` | `BEARER_TOKEN` | `Authorization: Bearer <token>` |
+| `http` / `basic` | `BASIC_AUTH_USER`, `BASIC_AUTH_PASS` | `Authorization: Basic <base64>` |
+| `oauth2` (placeholder) | `OAUTH_TOKEN` | `Authorization: Bearer <token>` |
+
+When a spec declares multiple schemes of the same kind, the env vars are suffixed with the scheme id (e.g. `API_KEY_PRIMARY`, `API_KEY_PARTNER`). Each generated scaffold prints the full env-var list as a top-of-file comment.
+
+`oauth2` flows vary too widely to auto-generate; the scaffold accepts a pre-obtained bearer token via `OAUTH_TOKEN`. Acquire the token externally (client-credentials, device flow, etc.) and inject it.
+
+Missing env vars never crash the server — `applyAuth` skips the header silently so endpoints that don't require auth still work. To opt out entirely and ship a no-op `applyAuth` stub, pass `--no-auth-wiring` to `ruah conv generate` or set `"authWiring": false` in `ruah.conv.json`.
+
 ## The IR: Ruah Tool Schema
 
 The intermediate representation is the core of Convert. Everything normalizes to this, everything generates from this.
@@ -254,6 +274,7 @@ ruah conv generate <spec> [options]    Parse spec and generate output
   --transport <mode>                     Generator transport hint
   --operation-profile <profile>          OpenAPI/Swagger preset: read-only, standard, all
   --config <path>                        Load generation defaults from JSON
+  --no-auth-wiring                       Skip schema-driven auth wiring in scaffolds
   --json                                 Output as JSON
 
 ruah conv inspect <spec> [options]     Parse spec and display IR summary

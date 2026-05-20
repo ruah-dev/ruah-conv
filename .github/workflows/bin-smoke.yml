@@ -1,0 +1,57 @@
+# Bin smoke test — verify the published bin shim works on supported Node versions.
+# Catches ESM/bin shim regressions (e.g., `npx @ruah-dev/conv --version`) before release.
+name: Bin Smoke
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  smoke:
+    name: Bin smoke (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['18.x', '20.x', '22.x']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - run: npm ci
+      - run: npm ci --prefix packages/core
+
+      - name: Build
+        run: npm run build
+
+      - name: bin --version
+        run: |
+          OUT="$(node bin/ruah-conv.js --version)"
+          echo "version output: $OUT"
+          if [ -z "$OUT" ]; then
+            echo "::error::ruah-conv --version produced no output"
+            exit 1
+          fi
+
+      - name: bin targets --json (>= 5 targets)
+        run: |
+          node bin/ruah-conv.js targets --json > targets.json
+          COUNT=$(node -e "const j=JSON.parse(require('fs').readFileSync('targets.json','utf8'));const arr=Array.isArray(j)?j:(j.targets||[]);console.log(arr.length)")
+          echo "target count: $COUNT"
+          if [ "$COUNT" -lt 5 ]; then
+            echo "::error::expected >= 5 targets, got $COUNT"
+            exit 1
+          fi
+
+      - name: bin generate end-to-end
+        run: |
+          node bin/ruah-conv.js generate packages/core/test/fixtures/clean/petstore.yaml --json > generate.json
+          head -c 200 generate.json
+          echo
+          test -s generate.json
