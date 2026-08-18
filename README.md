@@ -4,7 +4,17 @@
 [![license](https://img.shields.io/npm/l/@ruah-dev/conv)](LICENSE)
 [![tests](https://img.shields.io/badge/tests-196%20passing-brightgreen)](test/)
 
-**Convert API specs into agent-ready tool surfaces.**
+> **How do I make this API agent-sized?**
+
+A 400-endpoint spec is hostile to an agent. `ruah conv curate` is the headline
+command: collapse it into 5–10 task-shaped tools with compact schemas, print
+the definition token footprint, write a replayable `curation.json`. Conversion
+(spec → MCP / function-calling / plugin scaffold) is the supporting engine.
+
+```bash
+npx @ruah-dev/conv curate petstore.yaml --json
+# this surface costs ~N tokens of definitions (was ~M)
+```
 
 Feed it an OpenAPI spec, get MCP tool definitions, function-calling schemas, host-ready plugin bundles, or a full MCP server scaffold. One intermediate representation in the middle — every input parser normalizes to it, every output generator reads from it.
 

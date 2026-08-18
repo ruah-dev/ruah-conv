@@ -2,6 +2,8 @@ node_modules/
 dist/
 dist-test/
 *.tgz
+.ruah/*
+!.ruah/verify.json
 .claude/settings.local.json
 .claude/.discovery-cache.json
 .claude/.session-state.json

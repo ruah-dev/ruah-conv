@@ -305,6 +305,15 @@ describe("generate consumes curated IR", () => {
 });
 
 describe("curate CLI", () => {
+	it("--help leads with the one-line question", () => {
+		const res = spawnSync(process.execPath, [CLI, "--help"], {
+			encoding: "utf8",
+		});
+		assert.equal(res.status, 0, res.stderr);
+		assert.match(res.stdout, /How do I make this API agent-sized\?/);
+		assert.match(res.stdout, /curate is the headline/);
+	});
+
 	it("prints a versioned JSON plan", () => {
 		const cli = spawnSync(
 			process.execPath,

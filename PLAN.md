@@ -1,6 +1,13 @@
 # ruah-conv — Deep Build Plan (continuous track)
 
-> Read first: `../GROK_BUILD_PLAN.md` §C, `../ENGINEERING_STANDARDS.md`.
+> **Question it answers.** How do I make this API agent-sized?
+>
+> Curation-first (`GROK_BUILD_PLAN.md` §0.7 rule 7). `curate` is the headline
+> command; conversion is the supporting feature. Every generation prints the
+> definition token footprint. Any work item that does not serve that question
+> is rejected.
+>
+> Read first: `../GROK_BUILD_PLAN.md` §C + §0.7, `../ENGINEERING_STANDARDS.md`.
 > Package: `@ruah-dev/conv` · CLI: `ruah conv …` · Track: **continuous, parallel to T1–T5**
 
 ## 1. Where the code is today (verified 2026-08-18)
@@ -13,6 +20,11 @@ OpenAI/Anthropic function-calling, plugin bundles). Has git.
 **Housekeeping found during workspace audit:** `package.json` has NO
 `"ruah": { "namespace": "conv" }` field — `ruah conv …` currently resolves only
 through ruah-cli's fallback registry. Add the field (first, trivial commit).
+
+**Status 2026-08-19.** Namespace field is present. C1–C4 are in source
+(`curate`, deferred `--deferred`, definition-token cost on generate). Remaining
+for §4: demo GIF (`files/demos/conv/` has JSON + session.md), v0.7.1 tag for
+post-0.7.0 commits, npm publish (token blocked).
 
 ## 2. Mission shift: curation, not conversion
 

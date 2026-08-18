@@ -68,12 +68,15 @@ function buildHelp(): string {
 	const command = getPreferredConvCommand();
 
 	return `
-${label()} — convert API specs to agent-ready tool surfaces
+${label()} — How do I make this API agent-sized?
+
+curate is the headline. Conversion is the engine. Every generate prints
+the definition token footprint.
 
 Usage:
+  ${command} curate <spec-file> [--preset minimal|standard|full] [--plan curation.json] [--out dir] [--json]
   ${command} generate <spec-file> [--target mcp-tool-defs] [--output <dir>] [--name <server-name>] [--operation-profile <read-only|standard|all>] [--curate] [--plan curation.json] [--deferred] [--json]
   ${command} inspect <spec-file> [--json]
-  ${command} curate <spec-file> [--preset minimal|standard|full] [--plan curation.json] [--out dir] [--json]
   ${command} validate <spec-file> [--json]
   ${command} targets [--json]
 
@@ -106,8 +109,8 @@ Options:
   --version, -v        Show version
 
 Examples:
-  ${command} generate petstore.yaml --json
   ${command} curate petstore.yaml --json
+  ${command} generate petstore.yaml --json
   ${command} curate petstore.yaml --out ./curated --preset standard
   ${command} generate petstore.yaml --curate --target mcp-tool-defs --json
   ${command} generate petstore.yaml --plan curation.json --output ./generated/

@@ -1,0 +1,24 @@
+{
+	"schemaVersion": "1",
+	"criteria": [
+		{
+			"id": "readme-question",
+			"description": "README leads with the one-line question",
+			"check": {
+				"type": "file_matches",
+				"path": "README.md",
+				"pattern": "How do I make this API agent-sized"
+			}
+		},
+		{
+			"id": "package-json",
+			"description": "package.json is valid JSON",
+			"check": { "type": "json_valid", "file": "package.json" }
+		},
+		{
+			"id": "cli-exists",
+			"description": "CLI entry exists",
+			"check": { "type": "file_exists", "path": "src/cli.ts" }
+		}
+	]
+}

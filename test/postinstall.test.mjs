@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
 	buildUnixLauncher,
 	buildUnixLauncherScript,
@@ -8,6 +11,15 @@ import {
 	getGlobalBinDir,
 	resolveCliEntrypoint,
 } from "../postinstall.mjs";
+
+test("README leads with the one-line question", () => {
+	const readme = readFileSync(
+		join(dirname(fileURLToPath(import.meta.url)), "..", "README.md"),
+		"utf8",
+	);
+	assert.match(readme, /\*\*How do I make this API agent-sized\?\*\*/);
+	assert.match(readme, /ruah conv curate/);
+});
 
 test("getGlobalBinDir resolves unix global bins", () => {
 	assert.equal(

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- README, PLAN, and `--help` lead with “How do I make this API agent-sized?”
+  `curate` is the headline command; conversion is supporting. Every generate
+  still prints the definition token footprint.
+
 ### Added
 
 - **`--deferred`** — MCP search-then-load: expose `search_tools`, `get_tool_schema`, and `invoke_tool` instead of every operation. Supported on `mcp-tool-defs`, `mcp-ts-server`, `mcp-python-server`, and the plugin scaffolds. Use when the surface is still large after (or instead of) curation.

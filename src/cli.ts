@@ -68,19 +68,22 @@ function buildHelp(): string {
 	const command = getPreferredConvCommand();
 
 	return `
-${label()} — convert API specs to agent-ready tool surfaces
+${label()} — How do I make this API agent-sized?
+
+curate is the headline. Conversion is the engine. Every generate prints
+the definition token footprint.
 
 Usage:
+  ${command} curate <spec-file> [--json]
   ${command} generate <spec-file> [--target mcp-tool-defs] [--output <dir>] [--json]
   ${command} inspect <spec-file> [--json]
-  ${command} curate <spec-file> [--json]
   ${command} validate <spec-file> [--json]
   ${command} targets [--json]
 
 Commands:
+  curate      Group endpoints into ≤10 task tools; emit a replayable plan
   generate    Parse spec and produce output for the given target
   inspect     Parse spec and display the IR (tools, types, auth)
-  curate      Rank endpoints and propose a compact ≤10-tool surface
   validate    Parse spec and report warnings
   targets     List available output targets
 
@@ -92,9 +95,9 @@ Options:
   --version, -v   Show version
 
 Examples:
+  ${command} curate petstore.yaml --json
   ${command} generate petstore.yaml --json
   ${command} inspect petstore.yaml
-  ${command} validate petstore.yaml --json
   ${command} generate petstore.yaml --target mcp-tool-defs --output ./generated/
 
 CLI:
