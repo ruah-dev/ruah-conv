@@ -64,6 +64,7 @@
 		"node": ">=18.0.0"
 	},
 	"dependencies": {
+		"@ruah-dev/cli": "^1.2.0",
 		"@ruah-dev/conv-core": "file:./packages/core"
 	},
 	"devDependencies": {

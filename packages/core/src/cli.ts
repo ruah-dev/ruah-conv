@@ -2,7 +2,7 @@
 
 // @ruah-dev/conv-core — convert API specs to agent-ready tool surfaces
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { label, logError } from "./utils/format.js";
@@ -182,6 +182,14 @@ async function main(): Promise<void> {
 	}
 }
 
-if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
-	main();
+try {
+	if (
+		process.argv[1] &&
+		realpathSync(resolve(process.argv[1])) ===
+			realpathSync(fileURLToPath(import.meta.url))
+	) {
+		void main();
+	}
+} catch {
+	void main();
 }
