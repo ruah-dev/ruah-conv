@@ -1,6 +1,6 @@
 {
 	"name": "@ruah-dev/conv",
-	"version": "0.7.0",
+	"version": "0.7.1",
 	"description": "Standalone package for converting API specs into agent-ready tool surfaces.",
 	"type": "module",
 	"ruah": {
