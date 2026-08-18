@@ -73,12 +73,14 @@ ${label()} — convert API specs to agent-ready tool surfaces
 Usage:
   ${command} generate <spec-file> [--target mcp-tool-defs] [--output <dir>] [--json]
   ${command} inspect <spec-file> [--json]
+  ${command} curate <spec-file> [--json]
   ${command} validate <spec-file> [--json]
   ${command} targets [--json]
 
 Commands:
   generate    Parse spec and produce output for the given target
   inspect     Parse spec and display the IR (tools, types, auth)
+  curate      Rank endpoints and propose a compact ≤10-tool surface
   validate    Parse spec and report warnings
   targets     List available output targets
 
@@ -132,6 +134,11 @@ async function main(): Promise<void> {
 			}
 			case "inspect": {
 				const { run } = await import("./commands/inspect.js");
+				await run(args);
+				break;
+			}
+			case "curate": {
+				const { run } = await import("./commands/curate.js");
 				await run(args);
 				break;
 			}

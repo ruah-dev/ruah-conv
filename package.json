@@ -3,6 +3,10 @@
 	"version": "0.6.0",
 	"description": "Standalone package for converting API specs into agent-ready tool surfaces.",
 	"type": "module",
+	"ruah": {
+		"namespace": "conv",
+		"description": "API specs → agent-shaped tools"
+	},
 	"bin": {
 		"ruah-conv": "./bin/ruah-conv.js"
 	},
