@@ -1,6 +1,14 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { ParsedArgs } from "../cli.js";
 import { loadConfig } from "../config.js";
+import {
+	applyCurate,
+	parseCuratePreset,
+	parseCurationPlan,
+	proposeCurate,
+	replayPlan,
+} from "../curate/index.js";
+import { finalizePlan } from "../curate/propose.js";
 import { generate, getCapability, getTargets } from "../generators/index.js";
 import {
 	applyOperationProfile,
@@ -8,6 +16,7 @@ import {
 	countExcludedToolsByOperationProfile,
 	parseOperationProfile,
 } from "../generators/operation-profile.js";
+import type { RuahToolSchema } from "../ir/schema.js";
 import { summarizeWarnings, validateIR } from "../ir/validate.js";
 import { parse } from "../parsers/index.js";
 import { applyPaginationOverrides } from "../parsers/shared.js";
@@ -104,7 +113,8 @@ export async function run(args: ParsedArgs): Promise<void> {
 
 	// Parse
 	const parsedIr = parse(specFile);
-	const ir = applyPaginationOverrides(parsedIr, config.pagination);
+	const paginatedIr = applyPaginationOverrides(parsedIr, config.pagination);
+	const ir = applyOptionalCurate(paginatedIr, args, specFile, jsonMode);
 	const profileResolution = resolveOperationProfile({
 		sourceFormat: ir.meta.sourceFormat,
 		jsonMode,
@@ -204,4 +214,57 @@ export async function run(args: ParsedArgs): Promise<void> {
 			}
 		}
 	}
+}
+
+function applyOptionalCurate(
+	ir: RuahToolSchema,
+	args: ParsedArgs,
+	specFile: string,
+	jsonMode: boolean,
+): RuahToolSchema {
+	const wantsCurate = Boolean(args.flags.curate) || Boolean(args.named.plan);
+	if (!wantsCurate) return ir;
+
+	const preset = parseCuratePreset(args.named.preset, "--preset") ?? "standard";
+	let plan = proposeCurate(ir, { preset, source: specFile });
+
+	if (args.named.plan) {
+		if (!existsSync(args.named.plan)) {
+			logError(`Plan file not found: ${args.named.plan}`);
+			process.exit(1);
+		}
+		let savedRaw: unknown;
+		try {
+			savedRaw = JSON.parse(readFileSync(args.named.plan, "utf8"));
+		} catch (err) {
+			logError(
+				`Invalid plan JSON: ${err instanceof Error ? err.message : String(err)}`,
+			);
+			process.exit(1);
+		}
+		const replayed = replayPlan(plan, parseCurationPlan(savedRaw));
+		plan = finalizePlan(ir, {
+			preset: replayed.plan.preset,
+			source: specFile,
+			groups: replayed.plan.groups,
+			dropped: replayed.plan.dropped,
+			drift: replayed.drift,
+		});
+		if (!jsonMode && plan.drift) {
+			const { added, removed } = plan.drift;
+			if (added.length + removed.length > 0) {
+				logInfo(
+					`Curation drift: +${added.length} / -${removed.length} endpoints since the saved plan`,
+				);
+			}
+		}
+	}
+
+	const curated = applyCurate(ir, plan);
+	if (!jsonMode) {
+		logInfo(
+			`Curated ${plan.totalTools} endpoints → ${plan.curatedTools} tools (~${plan.curatedTokens} tok, was ~${plan.definitionTokens})`,
+		);
+	}
+	return curated;
 }

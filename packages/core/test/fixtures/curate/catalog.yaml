@@ -1,0 +1,166 @@
+openapi: "3.0.3"
+info:
+  title: Catalog API
+  version: "2.0.0"
+  description: Multi-resource shop used to test family grouping.
+servers:
+  - url: https://api.example.com
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      tags: [pets]
+      responses: { "200": { description: ok } }
+    post:
+      operationId: createPet
+      tags: [pets]
+      responses: { "201": { description: created } }
+  /pets/{petId}:
+    get:
+      operationId: getPet
+      tags: [pets]
+      parameters:
+        - { name: petId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+    delete:
+      operationId: deletePet
+      tags: [pets]
+      parameters:
+        - { name: petId, in: path, required: true, schema: { type: string } }
+      responses: { "204": { description: gone } }
+  /pets/{petId}/photos:
+    get:
+      operationId: listPetPhotos
+      tags: [pets]
+      parameters:
+        - { name: petId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+  /v1/users:
+    get:
+      operationId: listUsersV1
+      tags: [users]
+      responses: { "200": { description: ok } }
+  /v2/users:
+    get:
+      operationId: listUsersV2
+      tags: [users]
+      responses: { "200": { description: ok } }
+  /orders:
+    get:
+      operationId: listOrders
+      tags: [orders]
+      responses: { "200": { description: ok } }
+    post:
+      operationId: createOrder
+      tags: [orders]
+      responses: { "201": { description: created } }
+  /orders/{orderId}:
+    get:
+      operationId: getOrder
+      tags: [orders]
+      parameters:
+        - { name: orderId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+  /products:
+    get:
+      operationId: listProducts
+      tags: [products]
+      responses: { "200": { description: ok } }
+    post:
+      operationId: createProduct
+      tags: [products]
+      responses: { "201": { description: created } }
+  /products/{id}:
+    get:
+      operationId: getProduct
+      tags: [products]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+    patch:
+      operationId: updateProduct
+      tags: [products]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+  /legacy:
+    get:
+      operationId: getLegacy
+      deprecated: true
+      tags: [legacy]
+      responses: { "200": { description: ok } }
+  /stores:
+    get:
+      operationId: listStores
+      tags: [stores]
+      responses: { "200": { description: ok } }
+  /stores/{storeId}:
+    get:
+      operationId: getStore
+      tags: [stores]
+      parameters:
+        - { name: storeId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+  /invoices:
+    get:
+      operationId: listInvoices
+      tags: [invoices]
+      responses: { "200": { description: ok } }
+  /invoices/{invoiceId}:
+    get:
+      operationId: getInvoice
+      tags: [invoices]
+      parameters:
+        - { name: invoiceId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+  /customers:
+    get:
+      operationId: listCustomers
+      tags: [customers]
+      responses: { "200": { description: ok } }
+    post:
+      operationId: createCustomer
+      tags: [customers]
+      responses: { "201": { description: created } }
+  /customers/{customerId}:
+    get:
+      operationId: getCustomer
+      tags: [customers]
+      parameters:
+        - { name: customerId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+    delete:
+      operationId: deleteCustomer
+      tags: [customers]
+      parameters:
+        - { name: customerId, in: path, required: true, schema: { type: string } }
+      responses: { "204": { description: gone } }
+  /shipments:
+    get:
+      operationId: listShipments
+      tags: [shipments]
+      responses: { "200": { description: ok } }
+  /payments:
+    get:
+      operationId: listPayments
+      tags: [payments]
+      responses: { "200": { description: ok } }
+  /reviews:
+    get:
+      operationId: listReviews
+      tags: [reviews]
+      responses: { "200": { description: ok } }
+  /coupons:
+    get:
+      operationId: listCoupons
+      tags: [coupons]
+      responses: { "200": { description: ok } }
+  /webhooks:
+    get:
+      operationId: listWebhooks
+      tags: [webhooks]
+      responses: { "200": { description: ok } }
+    post:
+      operationId: createWebhook
+      tags: [webhooks]
+      responses: { "201": { description: created } }

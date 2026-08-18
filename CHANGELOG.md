@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-18
+
+### Added
+
+- **`ruah conv curate`** — IR→IR curation: group endpoint families into task tools (`managePets` with an `action` enum), emit a replayable `curation.json`, report definition token cost, and optionally generate from the curated surface
+- **Presets** — `--preset minimal|standard|full` (default `standard`, ≤10 task tools). `--limit` overrides the cap
+- **Replay + drift** — `curate --plan curation.json` and `generate --plan curation.json` re-apply saved accept/split/drop decisions and report added/removed endpoints
+- **`--interactive`** — TTY walk of each family (`accept` / `split` / `drop`)
+- **`--curate` on generate** — apply default curation before any target
+- Public library: `proposeCurate`, `applyCurate`, `replayPlan`, `estimateTokens`
+
+### Changed
+
+- Curate is no longer rank-and-slice. Collection + item CRUD collapse into one tool; `/v1` and `/v2` never merge; every drop has a stated reason
+
 ## [0.6.0] - 2026-05-21
 
 ### Added

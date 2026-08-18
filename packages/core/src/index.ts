@@ -1,6 +1,21 @@
 // Public API — for programmatic use of @ruah-dev/conv
 
 export type {
+	CurateOptions,
+	CuratePreset,
+	CurationDecision,
+	CurationDrift,
+	CurationGroup,
+	CurationPlan,
+} from "./curate/index.js";
+export {
+	applyCurate,
+	estimateTokens,
+	parseCurationPlan,
+	proposeCurate,
+	replayPlan,
+} from "./curate/index.js";
+export type {
 	GeneratedFile,
 	GenerateOptions,
 	GenerateResult,

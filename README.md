@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@ruah-dev/conv)](https://www.npmjs.com/package/@ruah-dev/conv)
 [![license](https://img.shields.io/npm/l/@ruah-dev/conv)](LICENSE)
-[![tests](https://img.shields.io/badge/tests-60%20passing-brightgreen)](test/)
+[![tests](https://img.shields.io/badge/tests-196%20passing-brightgreen)](test/)
 
 **Convert API specs into agent-ready tool surfaces.**
 
@@ -35,6 +35,7 @@ Concrete capabilities you can verify against the current release:
 - **Pagination detection** — common patterns (`limit`/`offset`, page-number/page-size, cursor) are detected and annotated in tool descriptions
 - **Clean TypeScript output** — generated scaffolds compile against real-world specs (Stripe, GitHub) without manual fix-up
 - **Single runtime dependency** — `yaml` only
+- **Curation** — `ruah conv curate` collapses a hostile 400-endpoint spec into ≤10 task-shaped tools (`managePets` with an `action` enum), prints definition token cost, and writes a replayable `curation.json`
 
 ## Not Yet
 
@@ -78,6 +79,24 @@ Types (3)
 ```
 
 ```bash
+# Collapse a spec into task tools, then generate
+npx @ruah-dev/conv curate petstore.yaml
+npx @ruah-dev/conv generate petstore.yaml --curate --json
+```
+
+```
+# ruah-conv curate — Petstore API
+this surface costs ~174 tokens of definitions (4 tools)
+curated set: 1 tools, ~29 tokens  [standard]
+
+  keep   managePets             4 ops  /pets
+         list       GET    /pets
+         get        GET    /pets/{petId}
+         create     POST   /pets
+         delete     DELETE /pets/{petId}
+```
+
+```bash
 # Generate MCP tool definitions
 npx @ruah-dev/conv generate petstore.yaml --json
 ```
@@ -113,6 +132,10 @@ npx @ruah-dev/conv generate petstore.yaml --json
 ## Use It
 
 ```bash
+# Curate: group families, write a replayable plan
+ruah conv curate ./spec.yaml --out ./curated --preset standard
+ruah conv generate ./spec.yaml --plan ./curated/curation.json --target mcp-tool-defs --json
+
 # Generate MCP tool definitions (JSON)
 ruah conv generate ./spec.yaml --target mcp-tool-defs --json
 
@@ -153,6 +176,23 @@ Or use the standalone CLI directly:
 ```bash
 npx @ruah-dev/conv generate ./spec.yaml --json
 ```
+
+## Curation heuristics (honest)
+
+`ruah conv curate` is deterministic. It is not an LLM. Defaults (`--preset standard`):
+
+| Rule | Effect |
+|------|--------|
+| Collection + item CRUD on the same resource | Merge into `manage{Resource}` with `action: list\|get\|create\|…` |
+| `/v1/users` vs `/v2/users` | Never merge — version is part of the family id |
+| `/users/{id}/orders` | Own family (`users/orders`), not folded into `manageUsers` |
+| Deprecated operations | Dropped with reason `deprecated` |
+| Rank | GET collection (10) > GET item (8) > POST collection (7) > writes (5) > DELETE (4). Deep paths and wide parameter lists lose a point |
+| Budget | Keep the top 10 families (`minimal` = 5 read-only, `full` = no cap). Overflow is `over-budget`, not silent |
+
+`--plan curation.json` replays your accept/split/drop decisions and prints drift when the spec gained or lost endpoints. `--interactive` walks each family on a TTY.
+
+Token counts use the same chars/4 + word-boundary blend as `ruah-opt` (`// sync-with: ruah-opt/src/estimator.ts`). Expect ±20% vs a real tokenizer.
 
 ## How It Works
 

@@ -71,26 +71,32 @@ function buildHelp(): string {
 ${label()} — convert API specs to agent-ready tool surfaces
 
 Usage:
-  ${command} generate <spec-file> [--target mcp-tool-defs] [--output <dir>] [--name <server-name>] [--operation-profile <read-only|standard|all>] [--json]
+  ${command} generate <spec-file> [--target mcp-tool-defs] [--output <dir>] [--name <server-name>] [--operation-profile <read-only|standard|all>] [--curate] [--plan curation.json] [--json]
   ${command} inspect <spec-file> [--json]
-  ${command} curate <spec-file> [--json]
+  ${command} curate <spec-file> [--preset minimal|standard|full] [--plan curation.json] [--out dir] [--json]
   ${command} validate <spec-file> [--json]
   ${command} targets [--json]
 
 Commands:
   generate    Parse spec and produce output for the given target
   inspect     Parse spec and display the IR (tools, types, auth)
-  curate      Rank endpoints and propose a compact ≤10-tool surface
+  curate      Group endpoints into ≤10 task tools and emit a replayable plan
   validate    Parse spec and report warnings
   targets     List available output targets
 
 Options:
   --target <id>        Output target (default: mcp-tool-defs)
   --output <dir>       Output directory (default: stdout)
+  --out <dir>          Write curation.json (+ optional generated files)
   --name <value>       Override generated server/service name
   --transport <mode>   Generator transport hint (stdio, streamable-http, sse, all)
   --operation-profile <profile>
                        OpenAPI/Swagger operation preset (read-only, standard, all)
+  --preset <id>        Curation preset: minimal, standard (default), full
+  --plan <file>        Replay a saved curation.json (reports drift)
+  --curate             Apply default curation before generate
+  --limit <n>          Cap curated task tools (overrides preset)
+  --interactive        Walk each family: accept / split / drop
   --config <path>      Load generation defaults from a JSON config file
   --no-auth-wiring     Skip schema-driven auth wiring in scaffold targets
   --verbose            Print every validation warning (default: one-line summary)
@@ -100,10 +106,10 @@ Options:
 
 Examples:
   ${command} generate petstore.yaml --json
-  ${command} inspect petstore.yaml
-  ${command} validate petstore.yaml --json
-  ${command} generate petstore.yaml --target mcp-tool-defs --output ./generated/
-  ${command} generate petstore.yaml --target mcp-ts-server --output ./server
+  ${command} curate petstore.yaml --json
+  ${command} curate petstore.yaml --out ./curated --preset standard
+  ${command} generate petstore.yaml --curate --target mcp-tool-defs --json
+  ${command} generate petstore.yaml --plan curation.json --output ./generated/
 
 CLI:
   ${formatTopLevelCliNotice()}
