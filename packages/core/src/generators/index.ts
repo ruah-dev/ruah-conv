@@ -1,6 +1,7 @@
 // Generator registry — maps target IDs to output generators.
 
 import type { PluginConfig } from "../config.js";
+import { toolDefinitionTokens } from "../curate/score.js";
 import type { RuahToolSchema } from "../ir/schema.js";
 import {
 	capability as a2aCapability,
@@ -73,6 +74,11 @@ export interface GenerateOptions {
 	deferred?: boolean;
 }
 
+export interface SurfaceHeaviest {
+	name: string;
+	estTokens: number;
+}
+
 export interface GenerateResult {
 	files: GeneratedFile[];
 	summary: {
@@ -80,6 +86,11 @@ export interface GenerateResult {
 		typeCount: number;
 		targetId: string;
 		warnings: string[];
+		/** Token footprint of the source IR tools (not the deferred meta-tools). */
+		definitionTokens?: number;
+		/** Operation count in the IR that was generated from. */
+		sourceToolCount?: number;
+		heaviest?: SurfaceHeaviest[];
 	};
 }
 
@@ -193,24 +204,60 @@ export function generate(
 
 	switch (targetId) {
 		case "mcp-tool-defs":
-			return generateMcpToolDefs(nextSpec, options);
+			return withSurfaceCost(generateMcpToolDefs(nextSpec, options), nextSpec);
 		case "mcp-ts-server":
-			return generateMcpTsServer(nextSpec, options);
+			return withSurfaceCost(generateMcpTsServer(nextSpec, options), nextSpec);
 		case "mcp-python-server":
-			return generateMcpPythonServer(nextSpec, options);
+			return withSurfaceCost(
+				generateMcpPythonServer(nextSpec, options),
+				nextSpec,
+			);
 		case "openai-tools":
-			return generateOpenAITools(nextSpec);
+			return withSurfaceCost(generateOpenAITools(nextSpec), nextSpec);
 		case "anthropic-tools":
-			return generateAnthropicTools(nextSpec);
+			return withSurfaceCost(generateAnthropicTools(nextSpec), nextSpec);
 		case "a2a-wrapper":
-			return generateA2AWrapper(nextSpec, options);
+			return withSurfaceCost(generateA2AWrapper(nextSpec, options), nextSpec);
 		case "claude-code-plugin-ts":
-			return generateClaudeCodePlugin(nextSpec, options);
+			return withSurfaceCost(
+				generateClaudeCodePlugin(nextSpec, options),
+				nextSpec,
+			);
 		case "codex-plugin-ts":
-			return generateCodexPlugin(nextSpec, options);
+			return withSurfaceCost(generateCodexPlugin(nextSpec, options), nextSpec);
 		default:
 			throw new Error(
 				`Unknown target: "${targetId}". Available: ${TARGETS.map((t) => t.id).join(", ")}`,
 			);
 	}
+}
+
+export function formatSurfaceCost(summary: GenerateResult["summary"]): string {
+	const tokens = summary.definitionTokens ?? 0;
+	const source = summary.sourceToolCount ?? summary.toolCount;
+	if (summary.toolCount !== source) {
+		return `this surface costs ~${tokens} tokens of definitions (${source} operations, ${summary.toolCount} exposed)`;
+	}
+	return `this surface costs ~${tokens} tokens of definitions (${summary.toolCount} tools)`;
+}
+
+function withSurfaceCost(
+	result: GenerateResult,
+	spec: RuahToolSchema,
+): GenerateResult {
+	const costs = spec.tools
+		.map((tool) => ({
+			name: tool.name,
+			estTokens: toolDefinitionTokens(tool),
+		}))
+		.sort((a, b) => b.estTokens - a.estTokens || a.name.localeCompare(b.name));
+	return {
+		...result,
+		summary: {
+			...result.summary,
+			definitionTokens: costs.reduce((sum, row) => sum + row.estTokens, 0),
+			sourceToolCount: spec.tools.length,
+			heaviest: costs.slice(0, 3),
+		},
+	};
 }

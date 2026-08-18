@@ -137,6 +137,7 @@ ruah conv curate ./spec.yaml --out ./curated --preset standard
 ruah conv generate ./spec.yaml --plan ./curated/curation.json --target mcp-tool-defs --json
 
 # Generate MCP tool definitions (JSON)
+# stderr: "this surface costs ~N tokens of definitions"
 ruah conv generate ./spec.yaml --target mcp-tool-defs --json
 
 # Generate OpenAI tool/function schemas

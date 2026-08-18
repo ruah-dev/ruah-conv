@@ -9,7 +9,12 @@ import {
 	replayPlan,
 } from "../curate/index.js";
 import { finalizePlan } from "../curate/propose.js";
-import { generate, getCapability, getTargets } from "../generators/index.js";
+import {
+	formatSurfaceCost,
+	generate,
+	getCapability,
+	getTargets,
+} from "../generators/index.js";
 import {
 	applyOperationProfile,
 	buildEmptyOperationProfileError,
@@ -189,6 +194,8 @@ export async function run(args: ParsedArgs): Promise<void> {
 			process.stdout.write(mainFile.content);
 			process.stdout.write("\n");
 		}
+		// Cost stays on stderr so `--json` pipes remain a pure artifact.
+		console.error(formatSurfaceCost(result.summary));
 		return;
 	}
 
@@ -208,6 +215,12 @@ export async function run(args: ParsedArgs): Promise<void> {
 	if (!jsonMode) {
 		console.log();
 		logSuccess(`Generated ${result.summary.toolCount} tools → ${targetId}`);
+		logInfo(formatSurfaceCost(result.summary));
+		if ((result.summary.heaviest ?? []).length > 0) {
+			for (const tool of result.summary.heaviest ?? []) {
+				console.error(`  ~${tool.estTokens} tok  ${tool.name}`);
+			}
+		}
 		if (operationProfile) {
 			const noun = excludedOperationCount === 1 ? "operation" : "operations";
 			const excluded =

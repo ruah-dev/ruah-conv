@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 - **`--deferred`** — MCP search-then-load: expose `search_tools`, `get_tool_schema`, and `invoke_tool` instead of every operation. Supported on `mcp-tool-defs`, `mcp-ts-server`, `mcp-python-server`, and the plugin scaffolds. Use when the surface is still large after (or instead of) curation.
 - **Description budgets** on curation presets: `minimal` 80 chars, `standard` 200, `full` unlimited.
+- **Context-cost on every generate** — `this surface costs ~N tokens of definitions`. Human mode prints it; `--json` keeps the artifact on stdout and the cost line on stderr. Library `summary.definitionTokens` / `sourceToolCount` / `heaviest`.
 
 ## [0.7.0] - 2026-08-18
 

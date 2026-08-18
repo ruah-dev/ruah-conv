@@ -164,6 +164,26 @@ describe("proposeCurate", () => {
 		);
 	});
 
+	it("caps a 100-endpoint spec at 10 task tools", () => {
+		const dir = mkdtempSync(resolve(tmpdir(), "ruah-curate-large-"));
+		const specPath = resolve(dir, "large.yaml");
+		writeFileSync(specPath, syntheticOpenApi(20), "utf8");
+		const ir = parse(specPath);
+		assert.equal(ir.tools.length, 100);
+		const plan = proposeCurate(ir, {
+			preset: "standard",
+			source: "large.yaml",
+		});
+		assert.ok(plan.curatedTools <= 10);
+		assert.ok(plan.dropped.length > 0);
+		const curated = applyCurate(ir, plan);
+		assert.ok(curated.tools.length <= 10);
+		const generated = generate("mcp-tool-defs", curated);
+		assert.ok((generated.summary.toolCount ?? 0) <= 10);
+		assert.equal(generated.summary.sourceToolCount, curated.tools.length);
+		assert.ok((generated.summary.definitionTokens ?? 0) > 0);
+	});
+
 	it("is deterministic", () => {
 		const ir = parse(CATALOG);
 		const a = JSON.stringify(proposeCurate(ir, { source: "catalog.yaml" }));
@@ -369,3 +389,46 @@ describe("curate CLI", () => {
 		assert.ok(payload.drift.added.some((item) => item.path === "/tags"));
 	});
 });
+
+/** 20 resources × 5 verbs = 100 operations. */
+function syntheticOpenApi(resources: number): string {
+	const paths: string[] = [];
+	for (let i = 0; i < resources; i++) {
+		const name = `res${String(i).padStart(2, "0")}`;
+		paths.push(`  /${name}:
+    get:
+      operationId: list_${name}
+      tags: [${name}]
+      responses: { "200": { description: ok } }
+    post:
+      operationId: create_${name}
+      tags: [${name}]
+      responses: { "201": { description: created } }
+  /${name}/{id}:
+    get:
+      operationId: get_${name}
+      tags: [${name}]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+    patch:
+      operationId: update_${name}
+      tags: [${name}]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+    delete:
+      operationId: delete_${name}
+      tags: [${name}]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "204": { description: gone } }`);
+	}
+	return `openapi: "3.0.3"
+info:
+  title: Large Catalog
+  version: "1.0.0"
+paths:
+${paths.join("\n")}
+`;
+}

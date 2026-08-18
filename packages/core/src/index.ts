@@ -24,6 +24,7 @@ export type {
 } from "./generators/index.js";
 // Generation
 export {
+	formatSurfaceCost,
 	generate,
 	getCapabilities,
 	getCapability,

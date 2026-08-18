@@ -80,6 +80,15 @@ describe("buildDeferredToolDefinitions", () => {
 });
 
 describe("generate --deferred", () => {
+	it("attaches definition token cost on every generate", () => {
+		const ir = parse(PETSTORE);
+		const result = generate("mcp-tool-defs", ir);
+		assert.equal(result.summary.sourceToolCount, 4);
+		assert.ok((result.summary.definitionTokens ?? 0) > 50);
+		assert.equal(result.summary.heaviest?.length, 3);
+		assert.equal(result.summary.heaviest?.[0]?.name, "listPets");
+	});
+
 	it("mcp-tool-defs emits the three meta-tools", () => {
 		const ir = parse(PETSTORE);
 		const result = generate("mcp-tool-defs", ir, { deferred: true });
@@ -157,6 +166,18 @@ describe("deferred CLI", () => {
 		);
 		assert.notEqual(cli.status, 0);
 		assert.match(cli.stderr, /--deferred is not supported/);
+	});
+
+	it("prints surface cost on stderr and keeps stdout as tools JSON", () => {
+		const cli = spawnSync(
+			process.execPath,
+			[CLI, "generate", PETSTORE, "--json", "--operation-profile", "all"],
+			{ encoding: "utf8" },
+		);
+		assert.equal(cli.status, 0, cli.stderr);
+		const tools = JSON.parse(cli.stdout) as unknown[];
+		assert.equal(tools.length, 4);
+		assert.match(cli.stderr, /this surface costs ~\d+ tokens of definitions/);
 	});
 
 	it("emits three tools from generate --deferred --json", () => {
