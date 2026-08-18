@@ -5,7 +5,7 @@
 	"type": "module",
 	"ruah": {
 		"namespace": "conv",
-		"description": "API specs → agent-shaped tools"
+		"description": "API specs \u2192 agent-shaped tools"
 	},
 	"bin": {
 		"ruah-conv": "./bin/ruah-conv.js"
@@ -64,7 +64,7 @@
 		"node": ">=18.0.0"
 	},
 	"dependencies": {
-		"@ruah-dev/cli": "^1.2.0",
+		"@ruah-dev/cli": "github:ruah-dev/ruah-cli#v1.2.2",
 		"@ruah-dev/conv-core": "file:./packages/core"
 	},
 	"devDependencies": {
