@@ -9,6 +9,7 @@ import type {
 } from "../ir/schema.js";
 import { deduplicateNames } from "../naming/index.js";
 import { identityOf } from "./family.js";
+import { getPresetPolicy, truncateDescription } from "./presets.js";
 import type { CurationGroup, CurationPlan } from "./types.js";
 
 const RISK_RANK: Record<Tool["riskLevel"], number> = {
@@ -43,11 +44,17 @@ export function applyCurate(
 	}
 
 	const names = deduplicateNames(tools.map((tool) => tool.name));
-	const renamed = tools.map((tool, index) =>
-		names[index] === tool.name
-			? tool
-			: { ...tool, name: names[index] ?? tool.name },
-	);
+	const maxDescription = getPresetPolicy(plan.preset).maxDescriptionChars;
+	const renamed = tools.map((tool, index) => {
+		const named =
+			names[index] === tool.name
+				? tool
+				: { ...tool, name: names[index] ?? tool.name };
+		const description = truncateDescription(named.description, maxDescription);
+		return description === named.description
+			? named
+			: { ...named, description };
+	});
 
 	return {
 		...ir,

@@ -71,7 +71,7 @@ function buildHelp(): string {
 ${label()} — convert API specs to agent-ready tool surfaces
 
 Usage:
-  ${command} generate <spec-file> [--target mcp-tool-defs] [--output <dir>] [--name <server-name>] [--operation-profile <read-only|standard|all>] [--curate] [--plan curation.json] [--json]
+  ${command} generate <spec-file> [--target mcp-tool-defs] [--output <dir>] [--name <server-name>] [--operation-profile <read-only|standard|all>] [--curate] [--plan curation.json] [--deferred] [--json]
   ${command} inspect <spec-file> [--json]
   ${command} curate <spec-file> [--preset minimal|standard|full] [--plan curation.json] [--out dir] [--json]
   ${command} validate <spec-file> [--json]
@@ -95,6 +95,7 @@ Options:
   --preset <id>        Curation preset: minimal, standard (default), full
   --plan <file>        Replay a saved curation.json (reports drift)
   --curate             Apply default curation before generate
+  --deferred           MCP search-then-load (search_tools + get_tool_schema + invoke_tool)
   --limit <n>          Cap curated task tools (overrides preset)
   --interactive        Walk each family: accept / split / drop
   --config <path>      Load generation defaults from a JSON config file
@@ -110,6 +111,7 @@ Examples:
   ${command} curate petstore.yaml --out ./curated --preset standard
   ${command} generate petstore.yaml --curate --target mcp-tool-defs --json
   ${command} generate petstore.yaml --plan curation.json --output ./generated/
+  ${command} generate stripe.yaml --deferred --target mcp-ts-server --output ./server
 
 CLI:
   ${formatTopLevelCliNotice()}

@@ -14,6 +14,7 @@ export const claudeCodeCapability: GeneratorCapability = {
 	emits: "files",
 	supportsTransport: true,
 	supportsName: true,
+	supportsDeferred: true,
 };
 
 export const codexCapability: GeneratorCapability = {
@@ -22,6 +23,7 @@ export const codexCapability: GeneratorCapability = {
 	emits: "files",
 	supportsTransport: true,
 	supportsName: true,
+	supportsDeferred: true,
 };
 
 const DEFAULT_VERSION = "0.1.0";

@@ -1,5 +1,10 @@
 import type { RuahToolSchema } from "../../ir/schema.js";
 import type { GeneratorCapability } from "../capability.js";
+import {
+	buildDeferredCatalog,
+	buildDeferredSchemas,
+	buildDeferredToolDefinitions,
+} from "../deferred.js";
 import type { GenerateOptions, GenerateResult } from "../index.js";
 import {
 	type AuthWiringPlan,
@@ -20,6 +25,7 @@ export const capability: GeneratorCapability = {
 	emits: "files",
 	supportsTransport: true,
 	supportsName: true,
+	supportsDeferred: true,
 };
 
 export function generate(
@@ -28,7 +34,10 @@ export function generate(
 ): GenerateResult {
 	const serverName =
 		options.name ?? `${sanitizeName(spec.meta.title)} MCP Server`;
-	const toolDefs = buildToolDefinitions(spec);
+	const deferred = options.deferred === true;
+	const toolDefs = deferred
+		? buildDeferredToolDefinitions(spec)
+		: buildToolDefinitions(spec);
 	const operationSpecs = buildOperationSpecs(spec);
 	const operations = spec.tools.map((tool) => {
 		const { flattenedBody } = buildToolInputSchema(tool, spec);
@@ -111,6 +120,12 @@ export function generate(
 					toolDefs,
 					operations,
 					authPlan,
+					deferred
+						? {
+								catalog: buildDeferredCatalog(spec),
+								schemas: buildDeferredSchemas(spec),
+							}
+						: undefined,
 				),
 			},
 			{
@@ -125,10 +140,14 @@ export function generate(
 			},
 		],
 		summary: {
-			toolCount: spec.tools.length,
+			toolCount: toolDefs.length,
 			typeCount: Object.keys(spec.types).length,
 			targetId: "mcp-ts-server",
-			warnings: [],
+			warnings: deferred
+				? [
+						`deferred: ${spec.tools.length} operations behind search_tools / get_tool_schema / invoke_tool`,
+					]
+				: [],
 		},
 	};
 }
@@ -139,16 +158,22 @@ function buildSharedServerSource(
 	toolDefs: ToolDefinition[],
 	operations: Array<Record<string, unknown>>,
 	authPlan: AuthWiringPlan,
+	deferred?: {
+		catalog: ReturnType<typeof buildDeferredCatalog>;
+		schemas: ReturnType<typeof buildDeferredSchemas>;
+	},
 ): string {
-	const registrations = toolDefs
-		.map((tool) => {
-			const props =
-				(tool.inputSchema.properties as Record<string, unknown>) ?? {};
-			// The MCP TS SDK's registerTool config accepts a structured `_meta`
-			// passthrough. We cast the config object to bypass version-skewed
-			// type checks across SDK minor versions while still emitting the
-			// metadata that downstream MCP clients can read off `tool._meta`.
-			return `  server.registerTool(
+	const registrations = deferred
+		? buildDeferredRegistrations()
+		: toolDefs
+				.map((tool) => {
+					const props =
+						(tool.inputSchema.properties as Record<string, unknown>) ?? {};
+					// The MCP TS SDK's registerTool config accepts a structured `_meta`
+					// passthrough. We cast the config object to bypass version-skewed
+					// type checks across SDK minor versions while still emitting the
+					// metadata that downstream MCP clients can read off `tool._meta`.
+					return `  server.registerTool(
     ${JSON.stringify(tool.name)},
     ({
       description: ${JSON.stringify(tool.description)},
@@ -157,8 +182,48 @@ function buildSharedServerSource(
     } as any),
     async (args) => invokeOperation(OPERATIONS[${JSON.stringify(tool.name)}] as Operation, args)
   );`;
-		})
-		.join("\n\n");
+				})
+				.join("\n\n");
+	const deferredTables = deferred
+		? `
+export const TOOL_CATALOG = ${JSON.stringify(deferred.catalog, null, 2)} as const;
+
+export const TOOL_SCHEMAS: Record<string, { name: string; description: string; inputSchema: Record<string, unknown> }> = ${JSON.stringify(deferred.schemas, null, 2)};
+
+function textResult(text: string, isError = false): CallToolResult {
+  return { isError, content: [{ type: "text" as const, text }] };
+}
+
+// sync-with: generators/deferred.ts searchCatalog
+function searchCatalog(query: string, limit: number) {
+  const cap = Math.min(25, Math.max(1, Math.round(Number.isFinite(limit) ? limit : 10)));
+  const needle = query.trim().toLowerCase();
+  if (!needle) return TOOL_CATALOG.slice(0, cap);
+  return TOOL_CATALOG
+    .map((entry) => ({ entry, score: scoreCatalogEntry(entry, needle) }))
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score || a.entry.name.localeCompare(b.entry.name))
+    .slice(0, cap)
+    .map((row) => row.entry);
+}
+
+function scoreCatalogEntry(entry: (typeof TOOL_CATALOG)[number], needle: string): number {
+  const name = entry.name.toLowerCase();
+  const path = entry.path.toLowerCase();
+  const description = entry.description.toLowerCase();
+  if (name === needle) return 100;
+  if (name.includes(needle)) return 80;
+  if (path.includes(needle)) return 60;
+  if (description.includes(needle)) return 40;
+  return needle.split(/\\s+/).filter(Boolean).reduce((score, token) => {
+    if (name.includes(token)) return score + 15;
+    if (path.includes(token)) return score + 10;
+    if (description.includes(token)) return score + 5;
+    return score;
+  }, 0);
+}
+`
+		: "";
 
 	const authBanner = renderAuthEnvVarBanner(authPlan, "//");
 	const authBody = renderAuthWiringTs(authPlan);
@@ -190,7 +255,7 @@ export const OPERATIONS: Record<string, Operation> = ${JSON.stringify(
 		null,
 		2,
 	)};
-
+${deferredTables}
 export function createServer() {
   const server = new McpServer({
     name: ${JSON.stringify(serverName)},
@@ -377,6 +442,50 @@ function applyAuth(
   void operationAuth;
 ${authBody}}
 `;
+}
+
+function buildDeferredRegistrations(): string {
+	return `  server.registerTool(
+    "search_tools",
+    ({
+      description: "Search API operations by name, path, or description.",
+      inputSchema: { query: z.string().optional(), limit: z.number().int().optional() }
+    } as any),
+    async (args) => textResult(JSON.stringify(searchCatalog(String(args.query ?? ""), Number(args.limit ?? 10)), null, 2))
+  );
+
+  server.registerTool(
+    "get_tool_schema",
+    ({
+      description: "Load the full input schema for one operation.",
+      inputSchema: { name: z.string() }
+    } as any),
+    async (args) => {
+      const name = String(args.name ?? "");
+      const schema = TOOL_SCHEMAS[name];
+      if (!schema) {
+        return textResult(JSON.stringify({ error: "unknown tool", name }), true);
+      }
+      return textResult(JSON.stringify(schema, null, 2));
+    }
+  );
+
+  server.registerTool(
+    "invoke_tool",
+    ({
+      description: "Invoke one API operation by name.",
+      inputSchema: { name: z.string(), arguments: z.record(z.unknown()).optional() }
+    } as any),
+    async (args) => {
+      const name = String(args.name ?? "");
+      const operation = OPERATIONS[name];
+      if (!operation) {
+        return textResult(JSON.stringify({ error: "unknown tool", name }), true);
+      }
+      const payload = (args.arguments ?? {}) as Record<string, unknown>;
+      return invokeOperation(operation, payload);
+    }
+  );`;
 }
 
 function buildStdioEntrypoint(): string {

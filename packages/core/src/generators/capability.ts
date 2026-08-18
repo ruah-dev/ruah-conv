@@ -9,4 +9,6 @@ export interface GeneratorCapability {
 	emits: GeneratorEmits;
 	supportsTransport: boolean;
 	supportsName: boolean;
+	/** Search-then-load meta-tools (`--deferred`). */
+	supportsDeferred?: boolean;
 }

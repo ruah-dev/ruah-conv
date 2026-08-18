@@ -1,5 +1,10 @@
 import type { RuahToolSchema } from "../../ir/schema.js";
 import type { GeneratorCapability } from "../capability.js";
+import {
+	buildDeferredCatalog,
+	buildDeferredSchemas,
+	buildDeferredToolDefinitions,
+} from "../deferred.js";
 import type { GenerateOptions, GenerateResult } from "../index.js";
 import {
 	type AuthWiringPlan,
@@ -20,6 +25,7 @@ export const capability: GeneratorCapability = {
 	emits: "files",
 	supportsTransport: true,
 	supportsName: true,
+	supportsDeferred: true,
 };
 
 export function generate(
@@ -40,7 +46,10 @@ export function generate(
 			auth: tool.auth ?? [],
 		};
 	});
-	const tools = buildToolDefinitions(spec);
+	const deferred = options.deferred === true;
+	const tools = deferred
+		? buildDeferredToolDefinitions(spec)
+		: buildToolDefinitions(spec);
 	const authPlan = buildAuthWiringPlan(spec.auth, options.authWiring !== false);
 
 	return {
@@ -64,14 +73,24 @@ export function generate(
 					tools,
 					operations,
 					authPlan,
+					deferred
+						? {
+								catalog: buildDeferredCatalog(spec),
+								schemas: buildDeferredSchemas(spec),
+							}
+						: undefined,
 				),
 			},
 		],
 		summary: {
-			toolCount: spec.tools.length,
+			toolCount: tools.length,
 			typeCount: Object.keys(spec.types).length,
 			targetId: "mcp-python-server",
-			warnings: [],
+			warnings: deferred
+				? [
+						`deferred: ${spec.tools.length} operations behind search_tools / get_tool_schema / invoke_tool`,
+					]
+				: [],
 		},
 	};
 }
@@ -101,42 +120,50 @@ function buildPythonServer(
 	}>,
 	operations: Array<Record<string, unknown>>,
 	authPlan: AuthWiringPlan,
+	deferred?: {
+		catalog: ReturnType<typeof buildDeferredCatalog>;
+		schemas: ReturnType<typeof buildDeferredSchemas>;
+	},
 ): string {
-	const decorators = tools
-		.map((tool, toolIndex) => {
-			const props =
-				(tool.inputSchema.properties as Record<string, unknown>) ?? {};
-			const required = new Set((tool.inputSchema.required as string[]) ?? []);
-			const usedIdents = new Set<string>();
-			const propEntries = Object.entries(props).map(([name, schema], i) => {
-				let safe = toSafePythonIdent(name, `arg_${i}`);
-				// Guarantee uniqueness in case two distinct keys sanitize to the
-				// same Python identifier (e.g. "a.b" and "a-b" both → "a_b").
-				let suffix = 0;
-				while (usedIdents.has(safe)) {
-					suffix += 1;
-					safe = `${toSafePythonIdent(name, `arg_${i}`)}_${suffix}`;
-				}
-				usedIdents.add(safe);
-				return { original: name, safe, schema };
-			});
-			const safeFnName = toSafePythonIdent(tool.name, `op_${toolIndex}`);
-			const args = propEntries
-				.map(
-					(entry) =>
-						`${entry.safe}: ${jsonSchemaToPythonType(entry.schema)}${required.has(entry.original) ? "" : " | None = None"}`,
-				)
-				.join(", ");
-			const payloadEntries = propEntries
-				.map((entry) => `${JSON.stringify(entry.original)}: ${entry.safe}`)
-				.join(", ");
-			return `@mcp.tool(name=${JSON.stringify(tool.name)}, description=${JSON.stringify(tool.description)})
+	const decorators = deferred
+		? buildDeferredPythonTools()
+		: tools
+				.map((tool, toolIndex) => {
+					const props =
+						(tool.inputSchema.properties as Record<string, unknown>) ?? {};
+					const required = new Set(
+						(tool.inputSchema.required as string[]) ?? [],
+					);
+					const usedIdents = new Set<string>();
+					const propEntries = Object.entries(props).map(([name, schema], i) => {
+						let safe = toSafePythonIdent(name, `arg_${i}`);
+						// Guarantee uniqueness in case two distinct keys sanitize to the
+						// same Python identifier (e.g. "a.b" and "a-b" both → "a_b").
+						let suffix = 0;
+						while (usedIdents.has(safe)) {
+							suffix += 1;
+							safe = `${toSafePythonIdent(name, `arg_${i}`)}_${suffix}`;
+						}
+						usedIdents.add(safe);
+						return { original: name, safe, schema };
+					});
+					const safeFnName = toSafePythonIdent(tool.name, `op_${toolIndex}`);
+					const args = propEntries
+						.map(
+							(entry) =>
+								`${entry.safe}: ${jsonSchemaToPythonType(entry.schema)}${required.has(entry.original) ? "" : " | None = None"}`,
+						)
+						.join(", ");
+					const payloadEntries = propEntries
+						.map((entry) => `${JSON.stringify(entry.original)}: ${entry.safe}`)
+						.join(", ");
+					return `@mcp.tool(name=${JSON.stringify(tool.name)}, description=${JSON.stringify(tool.description)})
 async def ${safeFnName}(${args}) -> str:
     payload = {${payloadEntries}}
     return await invoke_operation(OPERATIONS[${JSON.stringify(tool.name)}], payload)
 `;
-		})
-		.join("\n");
+				})
+				.join("\n");
 
 	const authBanner = renderAuthEnvVarBanner(authPlan, "#");
 	const authBody = renderAuthWiringPython(authPlan);
@@ -157,6 +184,51 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP(${JSON.stringify(serverName)}, stateless_http=True, json_response=True)
 API_BASE_URL = os.environ.get("API_BASE_URL", ${JSON.stringify(baseUrl ?? "http://localhost:3000")})
 OPERATIONS = ${toPythonLiteral(Object.fromEntries(operations.map((operation) => [operation.name, operation])))}
+${
+	deferred
+		? `
+TOOL_CATALOG = ${toPythonLiteral(deferred.catalog)}
+TOOL_SCHEMAS = ${toPythonLiteral(deferred.schemas)}
+
+
+def _search_catalog(query: str, limit: int) -> list[dict[str, Any]]:
+    cap = max(1, min(25, int(limit or 10)))
+    needle = (query or "").strip().lower()
+    if not needle:
+        return TOOL_CATALOG[:cap]
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for entry in TOOL_CATALOG:
+        score = _score_catalog_entry(entry, needle)
+        if score > 0:
+            scored.append((score, entry))
+    scored.sort(key=lambda row: (-row[0], row[1]["name"]))
+    return [entry for _, entry in scored[:cap]]
+
+
+def _score_catalog_entry(entry: dict[str, Any], needle: str) -> int:
+    name = str(entry.get("name", "")).lower()
+    path = str(entry.get("path", "")).lower()
+    description = str(entry.get("description", "")).lower()
+    if name == needle:
+        return 100
+    if needle in name:
+        return 80
+    if needle in path:
+        return 60
+    if needle in description:
+        return 40
+    score = 0
+    for token in needle.split():
+        if token in name:
+            score += 15
+        elif token in path:
+            score += 10
+        elif token in description:
+            score += 5
+    return score
+`
+		: ""
+}
 
 # Every auth scheme id declared in the spec. Used as a fallback when an
 # operation declares no security requirement of its own.
@@ -324,6 +396,29 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+`;
+}
+
+function buildDeferredPythonTools(): string {
+	return `@mcp.tool(name="search_tools", description="Search API operations by name, path, or description.")
+async def search_tools(query: str | None = None, limit: int | None = None) -> str:
+    return json.dumps(_search_catalog(query or "", limit or 10), indent=2)
+
+
+@mcp.tool(name="get_tool_schema", description="Load the full input schema for one operation.")
+async def get_tool_schema(name: str) -> str:
+    schema = TOOL_SCHEMAS.get(name)
+    if schema is None:
+        return json.dumps({"error": "unknown tool", "name": name})
+    return json.dumps(schema, indent=2)
+
+
+@mcp.tool(name="invoke_tool", description="Invoke one API operation by name.")
+async def invoke_tool(name: str, arguments: dict[str, Any] | None = None) -> str:
+    operation = OPERATIONS.get(name)
+    if operation is None:
+        return json.dumps({"error": "unknown tool", "name": name})
+    return await invoke_operation(operation, arguments or {})
 `;
 }
 

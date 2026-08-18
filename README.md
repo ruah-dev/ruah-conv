@@ -194,6 +194,23 @@ npx @ruah-dev/conv generate ./spec.yaml --json
 
 Token counts use the same chars/4 + word-boundary blend as `ruah-opt` (`// sync-with: ruah-opt/src/estimator.ts`). Expect ±20% vs a real tokenizer.
 
+## Deferred loading (when curation is not enough)
+
+If you still have dozens of tools after `--preset full` (or you skip curate on a Stripe-scale spec), generate a **search-then-load** MCP surface instead of registering every operation:
+
+```bash
+ruah conv generate ./spec.yaml --deferred --target mcp-ts-server --output ./server
+ruah conv generate ./spec.yaml --deferred --json   # 3 meta-tools
+```
+
+The agent sees three tools:
+
+1. `search_tools` — substring match on name / path / description
+2. `get_tool_schema` — load one operation's input schema
+3. `invoke_tool` — call it by name
+
+Worth it above ~30 tools. After a successful `curate` (≤10) you usually do not need it.
+
 ## How It Works
 
 ### 1. Parse

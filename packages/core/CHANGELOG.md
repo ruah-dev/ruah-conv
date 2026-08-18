@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- `--deferred` search-then-load for MCP targets
+- Preset description truncation (`minimal` 80 / `standard` 200 / `full` unlimited)
+
 ## [0.7.0] - 2026-08-18
 
 ### Added

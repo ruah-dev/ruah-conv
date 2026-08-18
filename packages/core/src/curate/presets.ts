@@ -7,6 +7,8 @@ export interface PresetPolicy {
 	maxDepth: number;
 	includeDeprecated: boolean;
 	methods: ReadonlySet<HttpMethod> | null;
+	/** Soft cap on tool descriptions. `Infinity` = keep source text. */
+	maxDescriptionChars: number;
 }
 
 const ALL_METHODS: ReadonlySet<HttpMethod> = new Set([
@@ -32,6 +34,7 @@ const PRESETS: Record<CuratePreset, PresetPolicy> = {
 		maxDepth: 1,
 		includeDeprecated: false,
 		methods: READ_METHODS,
+		maxDescriptionChars: 80,
 	},
 	standard: {
 		id: "standard",
@@ -39,6 +42,7 @@ const PRESETS: Record<CuratePreset, PresetPolicy> = {
 		maxDepth: 2,
 		includeDeprecated: false,
 		methods: ALL_METHODS,
+		maxDescriptionChars: 200,
 	},
 	full: {
 		id: "full",
@@ -46,6 +50,7 @@ const PRESETS: Record<CuratePreset, PresetPolicy> = {
 		maxDepth: Number.POSITIVE_INFINITY,
 		includeDeprecated: false,
 		methods: ALL_METHODS,
+		maxDescriptionChars: Number.POSITIVE_INFINITY,
 	},
 };
 
@@ -66,4 +71,11 @@ export function parseCuratePreset(
 
 export function getPresetPolicy(preset: CuratePreset): PresetPolicy {
 	return PRESETS[preset];
+}
+
+/** // sync-with: generators/deferred.ts truncateDescription */
+export function truncateDescription(text: string, max: number): string {
+	if (!Number.isFinite(max) || max <= 0 || text.length <= max) return text;
+	if (max <= 1) return "…";
+	return `${text.slice(0, max - 1).trimEnd()}…`;
 }

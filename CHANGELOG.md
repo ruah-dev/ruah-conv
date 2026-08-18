@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`--deferred`** — MCP search-then-load: expose `search_tools`, `get_tool_schema`, and `invoke_tool` instead of every operation. Supported on `mcp-tool-defs`, `mcp-ts-server`, `mcp-python-server`, and the plugin scaffolds. Use when the surface is still large after (or instead of) curation.
+- **Description budgets** on curation presets: `minimal` 80 chars, `standard` 200, `full` unlimited.
+
 ## [0.7.0] - 2026-08-18
 
 ### Added

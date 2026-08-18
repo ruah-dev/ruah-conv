@@ -109,6 +109,16 @@ export async function run(args: ParsedArgs): Promise<void> {
 				`--name has no effect on target "${targetId}"; the value will be ignored.`,
 			);
 		}
+
+		if (args.flags.deferred && capability.supportsDeferred !== true) {
+			const deferredTargets = targets
+				.filter((t) => getCapability(t.id)?.supportsDeferred === true)
+				.map((t) => t.id);
+			logError(
+				`--deferred is not supported by target "${targetId}". Supported: ${deferredTargets.join(", ")}.`,
+			);
+			process.exit(1);
+		}
 	}
 
 	// Parse
@@ -162,6 +172,7 @@ export async function run(args: ParsedArgs): Promise<void> {
 		operationProfile,
 		plugin: config.plugin,
 		authWiring,
+		deferred: Boolean(args.flags.deferred),
 	});
 
 	if (jsonMode) {

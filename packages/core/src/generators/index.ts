@@ -65,6 +65,12 @@ export interface GenerateOptions {
 	 * user fills in themselves.
 	 */
 	authWiring?: boolean;
+	/**
+	 * MCP search-then-load: expose `search_tools` / `get_tool_schema` /
+	 * `invoke_tool` instead of registering every operation. For surfaces
+	 * that stay large after (or instead of) curation.
+	 */
+	deferred?: boolean;
 }
 
 export interface GenerateResult {
@@ -187,7 +193,7 @@ export function generate(
 
 	switch (targetId) {
 		case "mcp-tool-defs":
-			return generateMcpToolDefs(nextSpec);
+			return generateMcpToolDefs(nextSpec, options);
 		case "mcp-ts-server":
 			return generateMcpTsServer(nextSpec, options);
 		case "mcp-python-server":
